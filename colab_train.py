@@ -353,9 +353,12 @@ def validate_agent(agent: RLAgent, num_matches: int = 10) -> float:
 # ============================================================
 # Main
 # ============================================================
+MAX_EPISODES = 5000
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gomoku RL Agent Training (self-play)")
-    parser.add_argument("--episodes", type=int, default=1000, help="Tong so van self-play")
+    parser.add_argument("--episodes", type=int, default=1000, help="Tong so van self-play (toi da 5000)")
     parser.add_argument("--batch-size", type=int, default=64, help="So sample moi lan train")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Kich thuoc replay buffer")
     parser.add_argument("--save-every", type=int, default=100, help="Luu checkpoint sau moi N van")
@@ -364,6 +367,10 @@ def main() -> None:
     parser.add_argument("--model-path", default="models/rl_agent.pth", help="Duong dan luu model")
     parser.add_argument("--resume", action="store_true", help="Tiep tuc tu checkpoint cuoi")
     args = parser.parse_args()
+
+    if args.episodes > MAX_EPISODES:
+        print(f"--episodes vuot gioi han, tu dong gioi han ve {MAX_EPISODES} (ban yeu cau {args.episodes}).")
+        args.episodes = MAX_EPISODES
 
     model_path = args.model_path
     meta_path = os.path.join(os.path.dirname(model_path) or ".", "checkpoint.json")
