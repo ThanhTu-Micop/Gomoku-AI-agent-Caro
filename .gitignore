@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Model files (RL checkpoints)
+*.pth
+*.pt
+*.model
+
+# Logs & data
+logs/
+models/
+*.log
+*_buffer.npz
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Local agent tooling
+.agent/
