@@ -1,27 +1,27 @@
-# ============================================================
-# Google Colab: Gomoku RL Agent Training
-# ============================================================
-# Runtime: GPU (T4/P100/L4)
-# ============================================================
-# Cell 1: Install deps
-# !pip install numpy pandas torch --quiet
-#
-# Cell 2: Run training (first time)
-# %run /content/colab_train.py --episodes 2000 --save-every 200
-#
-# Cell 3: Resume training (upload models/ from previous session first)
-# %run /content/colab_train.py --episodes 2000 --save-every 200 --resume
-
-import os
-import sys
-import json
-import time
 import argparse
+import json
+import os
+from collections import deque
+from dataclasses import dataclass, field
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from collections import deque
+
+
+# ============================================================
+# Google Colab: AlphaZero-style Gomoku Training (9x9)
+# ============================================================
+# Cell 1:
+# !pip install numpy pandas torch --quiet
+#
+# Cell 2 (fresh run):
+# %run /content/colab_train.py --episodes 2000 --save-every 200
+#
+# Cell 3 (resume):
+# %run /content/colab_train.py --episodes 2000 --save-every 200 --resume
+
 
 # ============================================================
 # Constants
@@ -30,9 +30,15 @@ BOARD_SIZE: int = 9
 EMPTY: int = 0
 X: int = 1
 O: int = 2
+MAX_EPISODES: int = 5000
+
+
+def other_player(player: int) -> int:
+    return O if player == X else X
+
 
 # ============================================================
-# Board
+# Board + Rules
 # ============================================================
 class Board:
     def __init__(self) -> None:
@@ -56,55 +62,51 @@ class Board:
     def get_valid_moves(self) -> list[tuple[int, int]]:
         return list(zip(*np.where(self.grid == EMPTY)))
 
-# ============================================================
-# Rules
-# ============================================================
-def check_direction(grid: np.ndarray, row: int, col: int, dr: int, dc: int, player: int) -> bool:
-    for k in range(5):
-        r, c = row + dr * k, col + dc * k
-        if r < 0 or r >= BOARD_SIZE or c < 0 or c >= BOARD_SIZE:
-            return False
-        if grid[r, c] != player:
-            return False
-    return True
 
 def is_win(grid: np.ndarray, player: int, last_move: tuple[int, int] | None = None) -> bool:
     directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+
     if last_move is not None:
         r_last, c_last = last_move
         for dr, dc in directions:
             count = 1
+
             r, c = r_last + dr, c_last + dc
             while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r, c] == player:
                 count += 1
                 r += dr
                 c += dc
+
             r, c = r_last - dr, c_last - dc
             while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r, c] == player:
                 count += 1
                 r -= dr
                 c -= dc
+
             if count >= 5:
                 return True
         return False
-    
+
     for r in range(BOARD_SIZE):
         for c in range(BOARD_SIZE):
-            if grid[r, c] == player:
-                for dr, dc in directions:
-                    count = 1
-                    for k in range(1, 5):
-                        nr, nc = r + dr * k, c + dc * k
-                        if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE and grid[nr, nc] == player:
-                            count += 1
-                        else:
-                            break
-                    if count >= 5:
-                        return True
+            if grid[r, c] != player:
+                continue
+            for dr, dc in directions:
+                count = 1
+                for k in range(1, 5):
+                    nr, nc = r + dr * k, c + dc * k
+                    if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE and grid[nr, nc] == player:
+                        count += 1
+                    else:
+                        break
+                if count >= 5:
+                    return True
     return False
+
 
 def is_draw(grid: np.ndarray) -> bool:
     return not np.any(grid == EMPTY)
+
 
 # ============================================================
 # Replay Buffer
@@ -126,8 +128,8 @@ class ReplayBuffer:
         policies: list[np.ndarray],
         rewards: list[float],
     ) -> None:
-        for s, p, r in zip(states, policies, rewards):
-            self.push(s, p, r)
+        for state, policy, reward in zip(states, policies, rewards):
+            self.push(state, policy, reward)
 
     def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if len(self.states) < batch_size:
@@ -156,86 +158,320 @@ class ReplayBuffer:
         self.policies = deque(data["policies"], maxlen=self.policies.maxlen)
         self.rewards = deque(data["rewards"], maxlen=self.rewards.maxlen)
 
+
 # ============================================================
-# Neural Network
+# Network
 # ============================================================
-class GomokuNet(nn.Module):
-    def __init__(self, board_size: int = BOARD_SIZE) -> None:
+class ResidualBlock(nn.Module):
+    def __init__(self, channels: int = 64) -> None:
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        self.policy_head = nn.Linear(64 * board_size * board_size, board_size * board_size)
-        self.value_head = nn.Linear(64 * board_size * board_size, 1)
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        x = torch.relu(self.bn1(self.conv1(x)))
+        x = self.bn2(self.conv2(x))
+        x = x + residual
+        return torch.relu(x)
+
+
+class AlphaZeroNet(nn.Module):
+    def __init__(
+        self,
+        board_size: int = BOARD_SIZE,
+        num_res_blocks: int = 5,
+        channels: int = 64,
+    ) -> None:
+        super().__init__()
+        self.input_conv = nn.Sequential(
+            nn.Conv2d(3, channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(),
+        )
+        self.res_blocks = nn.Sequential(
+            *[ResidualBlock(channels=channels) for _ in range(num_res_blocks)]
+        )
+        self.policy_head = nn.Sequential(
+            nn.Conv2d(channels, 2, kernel_size=1),
+            nn.BatchNorm2d(2),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(2 * board_size * board_size, board_size * board_size),
+        )
+        self.value_head = nn.Sequential(
+            nn.Conv2d(channels, 1, kernel_size=1),
+            nn.BatchNorm2d(1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(board_size * board_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Tanh(),
+        )
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
-        x_flat = x.view(x.size(0), -1)
-        policy = self.policy_head(x_flat)
-        value = torch.tanh(self.value_head(x_flat))
+        x = self.input_conv(x)
+        x = self.res_blocks(x)
+        policy = self.policy_head(x)
+        value = self.value_head(x)
         return policy, value
+
 
 def encode_board(grid: np.ndarray, player: int) -> np.ndarray:
     state = np.zeros((3, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     state[0] = (grid == player).astype(np.float32)
-    state[1] = (grid == (O if player == X else X)).astype(np.float32)
+    state[1] = (grid == other_player(player)).astype(np.float32)
     state[2] = (grid == EMPTY).astype(np.float32)
     return state
 
-# ============================================================
-# RL Agent
-# ============================================================
-class RLAgent:
-    def __init__(self, device: str = "cpu", buffer_capacity: int = 100_000) -> None:
-        self.device = device
-        self.network = GomokuNet().to(device)
-        self.optimizer = optim.Adam(self.network.parameters(), lr=1e-3)
-        self.buffer = ReplayBuffer(capacity=buffer_capacity)
 
-    def get_move(self, grid: np.ndarray, player: int, deterministic: bool = False) -> tuple[int, int]:
+def augment_data(state: np.ndarray, policy: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+    board_size = state.shape[1]
+    policy_2d = policy.reshape(board_size, board_size)
+    augmented: list[tuple[np.ndarray, np.ndarray]] = []
+
+    for k in range(4):
+        s_rot = np.rot90(state, k, axes=(1, 2)).copy()
+        p_rot = np.rot90(policy_2d, k).copy().flatten()
+        augmented.append((s_rot, p_rot))
+
+        s_flip = np.flip(s_rot, axis=2).copy()
+        p_flip = np.fliplr(np.rot90(policy_2d, k)).copy().flatten()
+        augmented.append((s_flip, p_flip))
+
+    return augmented
+
+
+# ============================================================
+# MCTS
+# ============================================================
+@dataclass
+class MCTSNode:
+    state: np.ndarray
+    player: int
+    parent: "MCTSNode | None" = None
+    prior: float = 0.0
+    move_from_parent: tuple[int, int] | None = None
+    children: dict[tuple[int, int], "MCTSNode"] = field(default_factory=dict)
+    visit_count: int = 0
+    value_sum: float = 0.0
+
+    @property
+    def q_value(self) -> float:
+        if self.visit_count == 0:
+            return 0.0
+        return self.value_sum / self.visit_count
+
+
+class MCTS:
+    def __init__(
+        self,
+        network: nn.Module,
+        device: str,
+        num_simulations: int = 200,
+        c_puct: float = 1.5,
+    ) -> None:
+        self.network = network
+        self.device = device
+        self.num_simulations = num_simulations
+        self.c_puct = c_puct
+
+    def search(self, root_state: np.ndarray, player: int, temperature: float = 1.0) -> np.ndarray:
+        root = MCTSNode(state=root_state.copy(), player=player)
+
+        for _ in range(self.num_simulations):
+            node = root
+            path: list[MCTSNode] = [node]
+
+            while node.children:
+                _, node = self._select_child(node)
+                path.append(node)
+
+            value = self._evaluate_and_expand(node)
+            self._backpropagate(path, value)
+
+        return self._build_policy(root, temperature)
+
+    def _select_child(self, node: MCTSNode) -> tuple[tuple[int, int], MCTSNode]:
+        best_move = (-1, -1)
+        best_child: MCTSNode | None = None
+        best_score = -float("inf")
+        parent_sqrt = np.sqrt(node.visit_count + 1)
+
+        for move, child in node.children.items():
+            exploration = self.c_puct * child.prior * parent_sqrt / (1 + child.visit_count)
+            score = -child.q_value + exploration
+            if score > best_score:
+                best_score = score
+                best_move = move
+                best_child = child
+
+        if best_child is None:
+            raise RuntimeError("MCTS selection failed")
+
+        return best_move, best_child
+
+    def _evaluate_and_expand(self, node: MCTSNode) -> float:
+        terminal = self._terminal_value(node)
+        if terminal is not None:
+            return terminal
+
+        policy, value = self._predict(node.state, node.player)
+        valid_mask = (node.state.flatten() == EMPTY).astype(np.float32)
+        masked_policy = policy * valid_mask
+        total = float(masked_policy.sum())
+
+        if total <= 0:
+            valid_idx = np.where(valid_mask > 0)[0]
+            if len(valid_idx) == 0:
+                return 0.0
+            masked_policy = np.zeros_like(masked_policy, dtype=np.float32)
+            masked_policy[valid_idx] = 1.0 / len(valid_idx)
+        else:
+            masked_policy /= total
+
+        for idx in np.where(valid_mask > 0)[0]:
+            r, c = divmod(int(idx), BOARD_SIZE)
+            child_state = node.state.copy()
+            child_state[r, c] = node.player
+            node.children[(r, c)] = MCTSNode(
+                state=child_state,
+                player=other_player(node.player),
+                parent=node,
+                prior=float(masked_policy[idx]),
+                move_from_parent=(r, c),
+            )
+
+        return value
+
+    def _predict(self, grid: np.ndarray, player: int) -> tuple[np.ndarray, float]:
         state = encode_board(grid, player)
         state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            policy, _ = self.network(state_tensor)
-        policy = policy.squeeze(0).cpu().numpy()
-        valid = np.where(grid.flatten() == EMPTY)[0]
-        if len(valid) == 0:
-            return BOARD_SIZE // 2, BOARD_SIZE // 2
-        policy_flat = policy.flatten()
-        policy_flat[~np.isin(np.arange(len(policy_flat)), valid)] = -float("inf")
-        probs = np.exp(policy_flat - np.max(policy_flat))
-        probs = probs / probs.sum()
-        if deterministic:
-            move_idx = int(np.argmax(probs))
-        else:
-            move_idx = int(np.random.choice(len(probs), p=probs))
-        return move_idx // BOARD_SIZE, move_idx % BOARD_SIZE
 
-    def record_experience(
+        self.network.eval()
+        with torch.no_grad():
+            policy_logits, value = self.network(state_tensor)
+
+        policy = torch.softmax(policy_logits.squeeze(0), dim=0).cpu().numpy().astype(np.float32)
+        value_scalar = float(value.squeeze(0).item())
+        return policy, value_scalar
+
+    def _terminal_value(self, node: MCTSNode) -> float | None:
+        if node.parent is not None and node.move_from_parent is not None:
+            prev_player = other_player(node.player)
+            if is_win(node.state, prev_player, last_move=node.move_from_parent):
+                return -1.0
+
+        if is_draw(node.state):
+            return 0.0
+
+        if node.parent is None:
+            if is_win(node.state, X):
+                return 1.0 if node.player == X else -1.0
+            if is_win(node.state, O):
+                return 1.0 if node.player == O else -1.0
+
+        return None
+
+    def _backpropagate(self, path: list[MCTSNode], value: float) -> None:
+        for node in reversed(path):
+            node.visit_count += 1
+            node.value_sum += value
+            value = -value
+
+    def _build_policy(self, root: MCTSNode, temperature: float) -> np.ndarray:
+        pi = np.zeros(BOARD_SIZE * BOARD_SIZE, dtype=np.float32)
+
+        if not root.children:
+            valid = np.where(root.state.flatten() == EMPTY)[0]
+            if len(valid) > 0:
+                pi[valid] = 1.0 / len(valid)
+            return pi
+
+        for move, child in root.children.items():
+            idx = move[0] * BOARD_SIZE + move[1]
+            pi[idx] = float(child.visit_count)
+
+        if temperature <= 0:
+            out = np.zeros_like(pi)
+            out[int(np.argmax(pi))] = 1.0
+            return out
+
+        pi = np.where(pi > 0, np.power(pi, 1.0 / temperature), 0.0)
+        total = float(pi.sum())
+        if total <= 0:
+            valid = np.where(root.state.flatten() == EMPTY)[0]
+            if len(valid) > 0:
+                pi[valid] = 1.0 / len(valid)
+            return pi
+
+        return pi / total
+
+
+# ============================================================
+# Agent
+# ============================================================
+class AlphaZeroAgent:
+    def __init__(
         self,
-        states: list[np.ndarray],
-        policies: list[np.ndarray],
-        rewards: list[float],
+        device: str = "cpu",
+        buffer_capacity: int = 100_000,
+        lr: float = 1e-3,
+        lr_decay_steps: int = 2000,
+        lr_decay_gamma: float = 0.5,
+        num_simulations: int = 200,
+        c_puct: float = 1.5,
+        num_res_blocks: int = 5,
+        channels: int = 64,
     ) -> None:
-        self.buffer.extend(states, policies, rewards)
+        self.device = device
+        self.network = AlphaZeroNet(
+            board_size=BOARD_SIZE,
+            num_res_blocks=num_res_blocks,
+            channels=channels,
+        ).to(device)
+        self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
+        self.scheduler = optim.lr_scheduler.StepLR(
+            self.optimizer,
+            step_size=lr_decay_steps,
+            gamma=lr_decay_gamma,
+        )
+        self.buffer = ReplayBuffer(capacity=buffer_capacity)
+        self.mcts = MCTS(
+            network=self.network,
+            device=device,
+            num_simulations=num_simulations,
+            c_puct=c_puct,
+        )
+
+    def set_num_simulations(self, num_simulations: int) -> None:
+        self.mcts.num_simulations = num_simulations
 
     def train_step(self, batch_size: int = 64) -> float:
         if len(self.buffer) < batch_size:
             return 0.0
+
         states, policies, rewards = self.buffer.sample(batch_size)
         state_tensors = torch.tensor(states, dtype=torch.float32).to(self.device)
         policy_targets = torch.tensor(policies, dtype=torch.float32).to(self.device)
         value_targets = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+
         policy_pred, value_pred = self.network(state_tensors)
-        policy_loss = -torch.sum(policy_targets * torch.log_softmax(policy_pred, dim=1), dim=1).mean()
+        policy_loss = -torch.sum(
+            policy_targets * torch.log_softmax(policy_pred, dim=1),
+            dim=1,
+        ).mean()
         value_loss = nn.MSELoss()(value_pred, value_targets)
         loss = policy_loss + value_loss
+
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return loss.item()
+        self.scheduler.step()
+        return float(loss.item())
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
@@ -251,70 +487,83 @@ class RLAgent:
     def load_buffer(self, path: str) -> None:
         self.buffer.load(path)
 
+
 # ============================================================
-# Self-Play Training
+# Self-play + Logging
 # ============================================================
-def play_self_play_game(agent: RLAgent, epsilon: float = 0.1) -> tuple[
-    list[np.ndarray], list[np.ndarray], list[float], int | None, list[tuple[int, int, int]]
-]:
+def play_self_play_game(
+    agent: AlphaZeroAgent,
+    exploration_moves: int = 12,
+) -> tuple[list[np.ndarray], list[np.ndarray], list[float], int | None, list[tuple[int, int, int]]]:
     board = Board()
     states: list[np.ndarray] = []
     policies: list[np.ndarray] = []
+    players: list[int] = []
     moves: list[tuple[int, int, int]] = []
     current_player = X
+    move_count = 0
 
     while True:
         state = encode_board(board.grid, current_player)
-        states.append(state)
+        temperature = 1.0 if move_count < exploration_moves else 0.0
+        pi = agent.mcts.search(board.grid.copy(), current_player, temperature=temperature)
 
-        state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(agent.device)
-        with torch.no_grad():
-            policy, _ = agent.network(state_tensor)
-        policy = policy.squeeze(0).cpu().numpy()
-
-        valid_moves = board.get_valid_moves()
-        if not valid_moves:
-            break
-
-        policy_flat = policy.flatten()
-        valid_indices = [r * BOARD_SIZE + c for r, c in valid_moves]
-        policy_flat[~np.isin(np.arange(len(policy_flat)), valid_indices)] = -float("inf")
-
-        if np.random.random() < epsilon:
-            move_idx = np.random.choice(valid_indices)
+        valid_mask = (board.grid.flatten() == EMPTY).astype(np.float32)
+        pi = pi * valid_mask
+        total = float(pi.sum())
+        if total <= 0:
+            valid_indices = np.where(valid_mask > 0)[0]
+            if len(valid_indices) == 0:
+                winner = None
+                break
+            pi = np.zeros(BOARD_SIZE * BOARD_SIZE, dtype=np.float32)
+            pi[valid_indices] = 1.0 / len(valid_indices)
         else:
-            probs = np.exp(policy_flat - np.max(policy_flat))
-            probs = probs / probs.sum()
-            move_idx = np.random.choice(len(probs), p=probs)
+            pi = pi / total
 
-        r, c = move_idx // BOARD_SIZE, move_idx % BOARD_SIZE
+        if temperature > 0:
+            move_idx = int(np.random.choice(len(pi), p=pi))
+        else:
+            move_idx = int(np.argmax(pi))
+
+        r, c = divmod(move_idx, BOARD_SIZE)
         board.place(r, c, current_player)
-        moves.append((current_player, r, c))
 
-        policy_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
-        policy_target[move_idx] = 1.0
-        policies.append(policy_target)
+        states.append(state)
+        policies.append(pi.astype(np.float32))
+        players.append(current_player)
+        moves.append((current_player, r, c))
+        move_count += 1
 
         if is_win(board.grid, current_player, last_move=(r, c)):
             winner = current_player
             break
-        elif is_draw(board.grid):
+        if is_draw(board.grid):
             winner = None
             break
 
-        current_player = O if current_player == X else X
+        current_player = other_player(current_player)
 
     rewards: list[float] = []
-    for i in range(len(states)):
-        turn = X if i % 2 == 0 else O
+    for player in players:
         if winner is None:
             rewards.append(0.0)
-        elif winner == turn:
+        elif winner == player:
             rewards.append(1.0)
         else:
             rewards.append(-1.0)
 
-    return states, policies, rewards, winner, moves
+    aug_states: list[np.ndarray] = []
+    aug_policies: list[np.ndarray] = []
+    aug_rewards: list[float] = []
+    for state, policy, reward in zip(states, policies, rewards):
+        for state_aug, policy_aug in augment_data(state, policy):
+            aug_states.append(state_aug)
+            aug_policies.append(policy_aug)
+            aug_rewards.append(reward)
+
+    return aug_states, aug_policies, aug_rewards, winner, moves
+
 
 def log_game_replay(log_path: str, match_id: int, moves: list[tuple[int, int, int]], winner: int | None) -> None:
     os.makedirs(os.path.dirname(log_path) if os.path.dirname(log_path) else ".", exist_ok=True)
@@ -326,90 +575,115 @@ def log_game_replay(log_path: str, match_id: int, moves: list[tuple[int, int, in
     with open(log_path, "a") as f:
         f.write(json.dumps(record) + "\n")
 
-def validate_agent(agent: RLAgent, num_matches: int = 10) -> float:
-    win = 0
-    for _ in range(num_matches):
-        board = Board()
-        current_player = X
-        while True:
-            if current_player == X:
-                move = agent.get_move(board.grid, current_player, deterministic=True)
-            else:
-                valid = board.get_valid_moves()
-                if not valid:
-                    break
-                move = valid[np.random.randint(len(valid))]
-            r, c = move
-            board.place(r, c, current_player)
-            if is_win(board.grid, current_player, last_move=(r, c)):
+
+def validate_agent(agent: AlphaZeroAgent, num_matches: int = 10, sims: int = 50) -> float:
+    original_sims = agent.mcts.num_simulations
+    agent.set_num_simulations(sims)
+
+    wins = 0
+    try:
+        for _ in range(num_matches):
+            board = Board()
+            current_player = X
+            while True:
                 if current_player == X:
-                    win += 1
-                break
-            elif is_draw(board.grid):
-                break
-            current_player = O if current_player == X else X
-    return win / num_matches
+                    pi = agent.mcts.search(board.grid.copy(), current_player, temperature=0.0)
+                    move_idx = int(np.argmax(pi))
+                    move = divmod(move_idx, BOARD_SIZE)
+                else:
+                    valid = board.get_valid_moves()
+                    if not valid:
+                        break
+                    move = valid[np.random.randint(len(valid))]
+
+                r, c = move
+                board.place(r, c, current_player)
+
+                if is_win(board.grid, current_player, last_move=(r, c)):
+                    if current_player == X:
+                        wins += 1
+                    break
+                if is_draw(board.grid):
+                    break
+
+                current_player = other_player(current_player)
+    finally:
+        agent.set_num_simulations(original_sims)
+
+    return wins / num_matches
+
 
 # ============================================================
 # Main
 # ============================================================
-MAX_EPISODES = 5000
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Gomoku RL Agent Training (self-play)")
-    parser.add_argument("--episodes", type=int, default=1000, help="Tong so van self-play (toi da 5000)")
-    parser.add_argument("--batch-size", type=int, default=64, help="So sample moi lan train")
-    parser.add_argument("--buffer-size", type=int, default=100_000, help="Kich thuoc replay buffer")
-    parser.add_argument("--save-every", type=int, default=100, help="Luu checkpoint sau moi N van")
-    parser.add_argument("--epsilon-start", type=float, default=0.5, help="Epsilon bat dau")
-    parser.add_argument("--epsilon-end", type=float, default=0.01, help="Epsilon ket thuc")
-    parser.add_argument("--model-path", default="models/rl_agent.pth", help="Duong dan luu model")
-    parser.add_argument("--resume", action="store_true", help="Tiep tuc tu checkpoint cuoi")
+    parser = argparse.ArgumentParser(description="Train AlphaZero Gomoku agent (self-play)")
+    parser.add_argument("--episodes", type=int, default=1000, help="Total self-play episodes (max 5000)")
+    parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
+    parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer capacity")
+    parser.add_argument("--save-every", type=int, default=100, help="Save checkpoint every N episodes")
+    parser.add_argument("--model-path", default="models/rl_agent.pth", help="Model save path")
+    parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
+    parser.add_argument("--mcts-sims", type=int, default=200, help="MCTS simulations per move")
+    parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration coefficient")
+    parser.add_argument("--exploration-moves", type=int, default=12, help="Opening moves sampled stochastically")
+    parser.add_argument("--num-res-blocks", type=int, default=5, help="Number of residual blocks")
+    parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
     args = parser.parse_args()
 
     if args.episodes > MAX_EPISODES:
-        print(f"--episodes vuot gioi han, tu dong gioi han ve {MAX_EPISODES} (ban yeu cau {args.episodes}).")
+        print(f"--episodes capped at {MAX_EPISODES} (requested {args.episodes})")
         args.episodes = MAX_EPISODES
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model_path = args.model_path
     meta_path = os.path.join(os.path.dirname(model_path) or ".", "checkpoint.json")
     buffer_path = model_path.replace(".pth", "_buffer.npz")
     replay_log = "logs/replays.jsonl"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    os.makedirs("models", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+
+    agent = AlphaZeroAgent(
+        device=device,
+        buffer_capacity=args.buffer_size,
+        num_simulations=args.mcts_sims,
+        c_puct=args.c_puct,
+        num_res_blocks=args.num_res_blocks,
+        channels=args.channels,
+    )
 
     start_episode = 1
     win_counts: dict[str, int] = {"X": 0, "O": 0, "Draw": 0}
 
     if args.resume and os.path.exists(model_path) and os.path.exists(meta_path):
-        agent = RLAgent(device=device, buffer_capacity=args.buffer_size)
         agent.load(model_path)
-        agent.load_buffer(buffer_path)
-        meta = json.load(open(meta_path))
-        start_episode = meta["episodes_done"] + 1
-        win_counts = meta.get("win_counts", {"X": 0, "O": 0, "Draw": 0})
-        print(f"Resumed from episode {meta['episodes_done']}")
-    else:
-        agent = RLAgent(device=device, buffer_capacity=args.buffer_size)
+        if os.path.exists(buffer_path):
+            agent.load_buffer(buffer_path)
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+        start_episode = int(meta.get("episodes_done", 0)) + 1
+        win_counts = meta.get("win_counts", win_counts)
+        print(f"Resumed from episode {start_episode - 1}")
 
     total_target = start_episode - 1 + args.episodes
     print(f"Device: {device}")
-    print(f"Episodes: {start_episode}-{total_target} ({args.episodes} van moi)")
+    print(f"Episodes: {start_episode}-{total_target} ({args.episodes} new)")
+    print(f"MCTS sims: {args.mcts_sims}, c_puct: {args.c_puct}")
     print(f"Batch: {args.batch_size}, Buffer: {args.buffer_size}")
     print()
 
     losses: list[float] = []
 
     for episode in range(start_episode, total_target + 1):
-        progress = (episode - start_episode + 1) / args.episodes
-        epsilon = max(args.epsilon_end, args.epsilon_start * (1 - progress))
-        states, policies, rewards, winner, moves = play_self_play_game(agent, epsilon=epsilon)
-        agent.record_experience(states, policies, rewards)
+        states, policies, rewards, winner, moves = play_self_play_game(
+            agent,
+            exploration_moves=args.exploration_moves,
+        )
+        agent.buffer.extend(states, policies, rewards)
 
         winner_name = "X" if winner == X else ("O" if winner == O else "Draw")
         win_counts[winner_name] = win_counts.get(winner_name, 0) + 1
-
         log_game_replay(replay_log, episode, moves, winner)
 
         loss = 0.0
@@ -418,28 +692,48 @@ def main() -> None:
             losses.append(loss)
 
         if episode % args.save_every == 0 or episode == start_episode:
-            avg_loss = sum(losses[-100:]) / min(len(losses), 100) if losses else 0
-            print(f"Episode {episode:5d}/{total_target} | "
-                  f"Loss: {avg_loss:.4f} | "
-                  f"Buffer: {len(agent.buffer):6d} | "
-                  f"X: {win_counts['X']:3d} | "
-                  f"O: {win_counts['O']:3d} | "
-                  f"Draw: {win_counts['Draw']:3d}")
+            avg_loss = sum(losses[-100:]) / min(len(losses), 100) if losses else 0.0
+            print(
+                f"Episode {episode:5d}/{total_target} | "
+                f"Loss: {avg_loss:.4f} | "
+                f"Buffer: {len(agent.buffer):6d} | "
+                f"X: {win_counts['X']:4d} | "
+                f"O: {win_counts['O']:4d} | "
+                f"Draw: {win_counts['Draw']:4d}"
+            )
 
         if episode % args.save_every == 0:
             agent.save(model_path)
             agent.save_buffer(buffer_path)
             with open(meta_path, "w") as f:
-                json.dump({"episodes_done": episode, "win_counts": win_counts}, f)
-            win_rate = validate_agent(agent)
-            print(f"  -> Saved checkpoint | Validation vs random: {win_rate*100:.0f}%")
+                json.dump(
+                    {
+                        "episodes_done": episode,
+                        "win_counts": win_counts,
+                        "mcts_sims": args.mcts_sims,
+                        "c_puct": args.c_puct,
+                    },
+                    f,
+                )
+            win_rate = validate_agent(agent, sims=50)
+            print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
 
     agent.save(model_path)
     agent.save_buffer(buffer_path)
     with open(meta_path, "w") as f:
-        json.dump({"episodes_done": total_target, "win_counts": win_counts}, f)
+        json.dump(
+            {
+                "episodes_done": total_target,
+                "win_counts": win_counts,
+                "mcts_sims": args.mcts_sims,
+                "c_puct": args.c_puct,
+            },
+            f,
+        )
+
     print(f"\nTraining complete. Model saved to {model_path}")
     print(f"Final: X={win_counts['X']}, O={win_counts['O']}, Draw={win_counts['Draw']}")
+
 
 if __name__ == "__main__":
     main()

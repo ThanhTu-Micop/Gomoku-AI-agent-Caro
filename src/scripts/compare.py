@@ -11,7 +11,7 @@ from src.game.board import Board
 from src.game.rules import is_win, is_draw
 from src.game.constants import X, O
 from src.ai.minimax import MinimaxAgent
-from src.ai.rl_agent import RLAgent
+from src.ai.rl_agent import AlphaZeroAgent, RLAgent
 from src.utils.logger import log_match, log_game_replay
 
 
@@ -43,7 +43,7 @@ def play_match(
         start_time = time.time()
 
         agent = ai1 if current_player == X else ai2
-        if isinstance(agent, RLAgent):
+        if isinstance(agent, (RLAgent, AlphaZeroAgent)):
             move = agent.get_move(board.grid.copy(), current_player, deterministic=True)
         else:
             move = agent.get_move(board.grid.copy(), current_player)
@@ -87,20 +87,39 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compare Minimax vs RL agent")
     parser.add_argument("--matches", type=int, default=10, help="Number of matches to play")
     parser.add_argument("--depth", type=int, default=3, help="Minimax search depth")
+    parser.add_argument(
+        "--agent-type",
+        type=str,
+        choices=["minimax", "rl", "alphazero"],
+        default="rl",
+        help="Opponent agent type",
+    )
     parser.add_argument("--rl-model", type=str, default=None, help="RL model checkpoint path")
+    parser.add_argument("--mcts-sims", type=int, default=200, help="MCTS simulations for AlphaZero")
+    parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration coefficient")
     parser.add_argument("--log-replay", action="store_true", help="Log game replays to JSONL")
     args = parser.parse_args()
 
     ai1 = MinimaxAgent(depth=args.depth)
     ai1_name = f"Minimax(d={args.depth})"
 
-    if args.rl_model:
-        ai2 = RLAgent()
-        ai2.load(args.rl_model)
-        ai2_name = "RL Agent"
-    else:
+    if args.agent_type == "minimax":
         ai2 = MinimaxAgent(depth=2)
-        ai2_name = f"Minimax(d=2)"
+        ai2_name = "Minimax(d=2)"
+    elif args.agent_type == "rl":
+        ai2 = RLAgent()
+        ai2_name = "RL Agent"
+        if args.rl_model:
+            ai2.load(args.rl_model)
+        else:
+            print("Warning: --rl-model not provided. Using untrained RL Agent.")
+    else:
+        ai2 = AlphaZeroAgent(num_simulations=args.mcts_sims, c_puct=args.c_puct)
+        ai2_name = f"AlphaZero(sims={args.mcts_sims})"
+        if args.rl_model:
+            ai2.load(args.rl_model)
+        else:
+            print("Warning: --rl-model not provided. Using untrained AlphaZero Agent.")
 
     print(f"Starting {args.matches} matches: {ai1_name} vs {ai2_name}")
 
