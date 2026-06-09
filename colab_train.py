@@ -70,37 +70,34 @@ def is_win(grid: np.ndarray, player: int, last_move: tuple[int, int] | None = No
         r_last, c_last = last_move
         for dr, dc in directions:
             count = 1
-
             r, c = r_last + dr, c_last + dc
             while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r, c] == player:
                 count += 1
                 r += dr
                 c += dc
-
             r, c = r_last - dr, c_last - dc
             while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r, c] == player:
                 count += 1
                 r -= dr
                 c -= dc
-
             if count >= 5:
                 return True
         return False
 
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if grid[r, c] != player:
-                continue
-            for dr, dc in directions:
-                count = 1
-                for k in range(1, 5):
-                    nr, nc = r + dr * k, c + dc * k
-                    if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE and grid[nr, nc] == player:
-                        count += 1
-                    else:
-                        break
-                if count >= 5:
-                    return True
+    # Fallback to full board check (highly optimized using numpy)
+    mask = (grid == player)
+    for dr, dc in directions:
+        win_mask = mask.copy()
+        for k in range(1, 5):
+            shifted = np.zeros_like(mask)
+            r_start, r_end = max(0, dr * k), min(BOARD_SIZE, BOARD_SIZE + dr * k)
+            c_start, c_end = max(0, dc * k), min(BOARD_SIZE, BOARD_SIZE + dc * k)
+            sr_start, sr_end = max(0, -dr * k), min(BOARD_SIZE, BOARD_SIZE - dr * k)
+            sc_start, sc_end = max(0, -dc * k), min(BOARD_SIZE, BOARD_SIZE - dc * k)
+            shifted[r_start:r_end, c_start:c_end] = mask[sr_start:sr_end, sc_start:sc_end]
+            win_mask &= shifted
+        if np.any(win_mask):
+            return True
     return False
 
 
@@ -250,7 +247,6 @@ def augment_data(state: np.ndarray, policy: np.ndarray) -> list[tuple[np.ndarray
 # ============================================================
 @dataclass
 class MCTSNode:
-    state: np.ndarray
     player: int
     parent: "MCTSNode | None" = None
     prior: float = 0.0
@@ -258,6 +254,7 @@ class MCTSNode:
     children: dict[tuple[int, int], "MCTSNode"] = field(default_factory=dict)
     visit_count: int = 0
     value_sum: float = 0.0
+    is_expanded: bool = False
 
     @property
     def q_value(self) -> float:
@@ -280,65 +277,57 @@ class MCTS:
         self.c_puct = c_puct
 
     def search(self, root_state: np.ndarray, player: int, temperature: float = 1.0) -> np.ndarray:
-        root = MCTSNode(state=root_state.copy(), player=player)
+        root = MCTSNode(player=player)
+        self._evaluate_and_expand(root, root_state)
 
         for _ in range(self.num_simulations):
             node = root
             path: list[MCTSNode] = [node]
+            current_state = root_state.copy()
 
-            while node.children:
-                _, node = self._select_child(node)
+            while node.is_expanded and node.children:
+                move, node = self._select_child(node)
+                current_state[move[0], move[1]] = other_player(node.player)
                 path.append(node)
 
-            value = self._evaluate_and_expand(node)
+            value = self._evaluate_and_expand(node, current_state)
             self._backpropagate(path, value)
 
         return self._build_policy(root, temperature)
 
     def _select_child(self, node: MCTSNode) -> tuple[tuple[int, int], MCTSNode]:
-        best_move = (-1, -1)
-        best_child: MCTSNode | None = None
-        best_score = -float("inf")
-        parent_sqrt = np.sqrt(node.visit_count + 1)
+        moves = list(node.children.keys())
+        children = list(node.children.values())
+        
+        counts = np.array([c.visit_count for c in children])
+        priors = np.array([c.prior for c in children])
+        q_values = np.array([-c.q_value for c in children])
+        
+        exploration = self.c_puct * priors * np.sqrt(node.visit_count) / (1 + counts)
+        scores = q_values + exploration
+        
+        best_idx = np.argmax(scores)
+        return moves[best_idx], children[best_idx]
 
-        for move, child in node.children.items():
-            exploration = self.c_puct * child.prior * parent_sqrt / (1 + child.visit_count)
-            score = -child.q_value + exploration
-            if score > best_score:
-                best_score = score
-                best_move = move
-                best_child = child
-
-        if best_child is None:
-            raise RuntimeError("MCTS selection failed")
-
-        return best_move, best_child
-
-    def _evaluate_and_expand(self, node: MCTSNode) -> float:
-        terminal = self._terminal_value(node)
+    def _evaluate_and_expand(self, node: MCTSNode, state: np.ndarray) -> float:
+        terminal = self._terminal_value(node, state)
         if terminal is not None:
             return terminal
 
-        policy, value = self._predict(node.state, node.player)
-        valid_mask = (node.state.flatten() == EMPTY).astype(np.float32)
+        policy, value = self._predict(state, node.player)
+        valid_mask = (state.flatten() == EMPTY).astype(np.float32)
         masked_policy = policy * valid_mask
         total = float(masked_policy.sum())
 
         if total <= 0:
-            valid_idx = np.where(valid_mask > 0)[0]
-            if len(valid_idx) == 0:
-                return 0.0
-            masked_policy = np.zeros_like(masked_policy, dtype=np.float32)
-            masked_policy[valid_idx] = 1.0 / len(valid_idx)
+            masked_policy = valid_mask / valid_mask.sum()
         else:
             masked_policy /= total
 
+        node.is_expanded = True
         for idx in np.where(valid_mask > 0)[0]:
             r, c = divmod(int(idx), BOARD_SIZE)
-            child_state = node.state.copy()
-            child_state[r, c] = node.player
             node.children[(r, c)] = MCTSNode(
-                state=child_state,
                 player=other_player(node.player),
                 parent=node,
                 prior=float(masked_policy[idx]),
@@ -359,20 +348,14 @@ class MCTS:
         value_scalar = float(value.squeeze(0).item())
         return policy, value_scalar
 
-    def _terminal_value(self, node: MCTSNode) -> float | None:
-        if node.parent is not None and node.move_from_parent is not None:
+    def _terminal_value(self, node: MCTSNode, state: np.ndarray) -> float | None:
+        if node.move_from_parent is not None:
             prev_player = other_player(node.player)
-            if is_win(node.state, prev_player, last_move=node.move_from_parent):
+            if is_win(state, prev_player, last_move=node.move_from_parent):
                 return -1.0
 
-        if is_draw(node.state):
+        if is_draw(state):
             return 0.0
-
-        if node.parent is None:
-            if is_win(node.state, X):
-                return 1.0 if node.player == X else -1.0
-            if is_win(node.state, O):
-                return 1.0 if node.player == O else -1.0
 
         return None
 
@@ -386,9 +369,6 @@ class MCTS:
         pi = np.zeros(BOARD_SIZE * BOARD_SIZE, dtype=np.float32)
 
         if not root.children:
-            valid = np.where(root.state.flatten() == EMPTY)[0]
-            if len(valid) > 0:
-                pi[valid] = 1.0 / len(valid)
             return pi
 
         for move, child in root.children.items():
@@ -400,15 +380,8 @@ class MCTS:
             out[int(np.argmax(pi))] = 1.0
             return out
 
-        pi = np.where(pi > 0, np.power(pi, 1.0 / temperature), 0.0)
-        total = float(pi.sum())
-        if total <= 0:
-            valid = np.where(root.state.flatten() == EMPTY)[0]
-            if len(valid) > 0:
-                pi[valid] = 1.0 / len(valid)
-            return pi
-
-        return pi / total
+        pi = np.power(pi, 1.0 / temperature)
+        return pi / pi.sum()
 
 
 # ============================================================
