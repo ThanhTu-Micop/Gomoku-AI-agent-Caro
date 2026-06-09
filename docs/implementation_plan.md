@@ -31,7 +31,7 @@ Tư tưởng cốt lõi: **MCTS giả lập suy nghĩ sâu, ResNet đánh giá t
 ### Task 1.1 — ResNet Network
 
 **File:** `src/ai/rl_agent.py`  
-**Status:** ⬜ Chưa bắt đầu
+**Status:** ✅ Hoàn thành
 
 Thay thế `GomokuNet` (3 lớp Conv2D đơn giản) bằng `AlphaZeroNet` (ResNet):
 
@@ -104,15 +104,15 @@ class AlphaZeroNet(nn.Module):
 - Số `num_res_blocks=5` phù hợp cho bàn 9x9 (nhỏ hơn 15x15 nên không cần 19 blocks như AlphaGo).
 
 **Acceptance criteria:**
-- [ ] `AlphaZeroNet` xuất ra policy shape `(batch, 81)` và value shape `(batch, 1)`
-- [ ] Forward pass chạy không lỗi với input shape `(1, 3, 9, 9)`
+- [x] `AlphaZeroNet` xuất ra policy shape `(batch, 81)` và value shape `(batch, 1)`
+- [x] Forward pass chạy không lỗi với input shape `(1, 3, 9, 9)`
 
 ---
 
 ### Task 1.2 — Data Augmentation
 
 **File:** `src/ai/rl_agent.py`  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Không
 
 Thêm hàm `augment_data()` sinh 8 phiên bản đối xứng (4 phép xoay x 2 lật) từ 1 cặp `(state, policy)`:
@@ -145,9 +145,9 @@ def augment_data(
 ```
 
 **Acceptance criteria:**
-- [ ] `augment_data` trả về đúng 8 cặp `(state, policy)`
-- [ ] Bàn cờ đối xứng khớp với policy (quân ở (0,0) -> policy bit tương ứng ở vị trí đã xoay/lật)
-- [ ] Unit test kiểm tra: đặt 1 quân ở (0, 0), augment, verify vị trí chính xác trong cả 8 biến thể
+- [x] `augment_data` trả về đúng 8 cặp `(state, policy)`
+- [x] Bàn cờ đối xứng khớp với policy (quân ở (0,0) -> policy bit tương ứng ở vị trí đã xoay/lật)
+- [x] Unit test kiểm tra: đặt 1 quân ở (0, 0), augment, verify vị trí chính xác trong cả 8 biến thể
 
 ---
 
@@ -156,7 +156,7 @@ def augment_data(
 ### Task 2.1 — MCTS Core
 
 **File:** `src/ai/mcts.py` *(file mới)*  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Task 1.1 (cần `AlphaZeroNet` để đánh giá lá)
 
 Cài đặt **Monte Carlo Tree Search** với **PUCT selection**:
@@ -219,9 +219,9 @@ class MCTS:
 - Cache policy/value prediction của root node để tránh gọi network lại.
 
 **Acceptance criteria:**
-- [ ] `MCTS.search()` trả về vector `pi` shape `(81,)` với tổng xấp xỉ 1.0
-- [ ] Các ô đã có quân có `pi[i] == 0`
-- [ ] Smoke test: tạo board trống, chạy 50 simulations -> nước đi ở trung tâm (4,4) có `pi` cao nhất
+- [x] `MCTS.search()` trả về vector `pi` shape `(81,)` với tổng xấp xỉ 1.0
+- [x] Các ô đã có quân có `pi[i] == 0`
+- [x] Smoke test: tạo board trống, chạy 50 simulations -> nước đi ở trung tâm (4,4) có `pi` cao nhất
 
 ---
 
@@ -230,7 +230,7 @@ class MCTS:
 ### Task 3.1 — Training Loop mới
 
 **File:** `src/scripts/train_rl.py`  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Task 1.1, Task 1.2, Task 2.1
 
 Thay đổi chính so với code hiện tại:
@@ -271,16 +271,16 @@ Thay đổi chính so với code hiện tại:
 | *(mới)* `--exploration-moves` | Số nước đầu dùng temperature=1 (mặc định: 12) |
 
 **Acceptance criteria:**
-- [ ] Self-play 1 ván hoàn thành không crash
-- [ ] Replay buffer chứa states được augment 8x
-- [ ] Loss giảm dần sau 50+ ván
+- [x] Self-play 1 ván hoàn thành không crash
+- [x] Replay buffer chứa states được augment 8x
+- [x] Loss giảm dần sau 50+ ván
 
 ---
 
 ### Task 3.2 — Đồng bộ Colab Training
 
 **File:** `colab_train.py`  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Task 3.1
 
 Vì `colab_train.py` là bản **self-contained** (gộp tất cả code vào 1 file để chạy trên Colab), cần đồng bộ:
@@ -293,8 +293,8 @@ Vì `colab_train.py` là bản **self-contained** (gộp tất cả code vào 1 
 - Cập nhật `validate_agent`: dùng MCTS với ít simulations (50) khi validate
 
 **Acceptance criteria:**
-- [ ] `colab_train.py` chạy standalone trên Colab (không import gì từ `src/`)
-- [ ] Model output tương thích — có thể load bằng `RLAgent.load()` trên local
+- [x] `colab_train.py` chạy standalone trên Colab (không import gì từ `src/`)
+- [x] Model output tương thích — có thể load bằng `RLAgent.load()` trên local
 
 ---
 
@@ -303,7 +303,7 @@ Vì `colab_train.py` là bản **self-contained** (gộp tất cả code vào 1 
 ### Task 4.1 — Cập nhật Agent Interface
 
 **File:** `src/ai/rl_agent.py`  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Task 2.1
 
 Tạo class `AlphaZeroAgent(Agent)` (giữ `RLAgent` cũ):
@@ -334,16 +334,16 @@ class AlphaZeroAgent(Agent):
 **Lưu ý:** Giữ cả `RLAgent` (class cũ dùng `GomokuNet`) để có thể so sánh RL cũ vs AlphaZero mới.
 
 **Acceptance criteria:**
-- [ ] `AlphaZeroAgent.get_move()` trả về nước đi hợp lệ
-- [ ] Load model trained -> đấu 1 ván GUI không crash
-- [ ] Signature tương thích `Agent.get_move(grid, player)`
+- [x] `AlphaZeroAgent.get_move()` trả về nước đi hợp lệ
+- [x] Load model trained -> đấu 1 ván GUI không crash
+- [x] Signature tương thích `Agent.get_move(grid, player)`
 
 ---
 
 ### Task 4.2 — Cập nhật Compare Script
 
 **File:** `src/scripts/compare.py`  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Task 4.1
 
 Bổ sung tham số:
@@ -359,15 +359,15 @@ Cho phép so sánh 3 cặp:
 - RL (cũ) vs AlphaZero (mới)
 
 **Acceptance criteria:**
-- [ ] `python src/scripts/compare.py --agent-type alphazero --rl-model models/rl_agent.pth --matches 5` chạy được
-- [ ] Log kết quả vào `logs/matches.csv` đúng format
+- [x] `python src/scripts/compare.py --agent-type alphazero --rl-model models/rl_agent.pth --matches 5` chạy được
+- [x] Log kết quả vào `logs/matches.csv` đúng format
 
 ---
 
 ### Task 4.3 — Cập nhật GUI
 
 **File:** `src/ui/gui.py` và `src/main.py`  
-**Status:** ⬜ Chưa bắt đầu  
+**Status:** ✅ Hoàn thành  
 **Phụ thuộc:** Task 4.1
 
 Cho người dùng chọn đối thủ AI trong GUI hoặc qua CLI:
@@ -377,8 +377,8 @@ python src/main.py --ai alphazero --model models/rl_agent.pth --mcts-sims 200
 ```
 
 **Acceptance criteria:**
-- [ ] Người chơi đấu được với AlphaZero Agent qua GUI
-- [ ] AI suy nghĩ < 5 giây/nước đi (200 sims trên CPU)
+- [x] Người chơi đấu được với AlphaZero Agent qua GUI
+- [x] AI suy nghĩ < 5 giây/nước đi (200 sims trên CPU)
 
 ---
 
