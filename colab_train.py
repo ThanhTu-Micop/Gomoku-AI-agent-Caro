@@ -254,13 +254,17 @@ class MCTSNode:
     children: dict[tuple[int, int], "MCTSNode"] = field(default_factory=dict)
     visit_count: int = 0
     value_sum: float = 0.0
+    virtual_loss: int = 0
     is_expanded: bool = False
 
     @property
     def q_value(self) -> float:
-        if self.visit_count == 0:
+        # Include virtual loss in Q calculation to discourage multiple simulations
+        # from picking the same path before evaluation returns.
+        effective_visits = self.visit_count + self.virtual_loss
+        if effective_visits == 0:
             return 0.0
-        return self.value_sum / self.visit_count
+        return self.value_sum / effective_visits
 
 
 class MCTS:
@@ -268,30 +272,58 @@ class MCTS:
         self,
         network: nn.Module,
         device: str,
-        num_simulations: int = 200,
-        c_puct: float = 1.5,
+        num_simulations: int = 80,
+        c_puct: float = 1.4,
     ) -> None:
         self.network = network
         self.device = device
         self.num_simulations = num_simulations
         self.c_puct = c_puct
+        self.network.eval() # Ensure eval mode is set once
 
-    def search(self, root_state: np.ndarray, player: int, temperature: float = 1.0) -> np.ndarray:
+    def search(
+        self,
+        root_state: np.ndarray,
+        player: int,
+        temperature: float = 1.0,
+        batch_size: int = 16, # Optimized batch size
+    ) -> np.ndarray:
         root = MCTSNode(player=player)
-        self._evaluate_and_expand(root, root_state)
+        self._evaluate_and_expand_batch([root], [root_state])
 
-        for _ in range(self.num_simulations):
-            node = root
-            path: list[MCTSNode] = [node]
-            current_state = root_state.copy()
+        num_batches = max(1, self.num_simulations // batch_size)
+        
+        with torch.inference_mode():
+            for _ in range(num_batches):
+                leaves: list[MCTSNode] = []
+                leaf_states: list[np.ndarray] = []
+                paths: list[list[MCTSNode]] = []
 
-            while node.is_expanded and node.children:
-                move, node = self._select_child(node)
-                current_state[move[0], move[1]] = other_player(node.player)
-                path.append(node)
+                # Collect batch of leaves
+                for _ in range(batch_size):
+                    node = root
+                    path = [node]
+                    curr_state = root_state.copy()
 
-            value = self._evaluate_and_expand(node, current_state)
-            self._backpropagate(path, value)
+                    while node.is_expanded and node.children:
+                        move, node = self._select_child(node)
+                        curr_state[move[0], move[1]] = other_player(node.player)
+                        path.append(node)
+                        # Add virtual loss while traversing
+                        node.virtual_loss += 3 # Standard virtual loss value
+                    
+                    leaves.append(node)
+                    leaf_states.append(curr_state)
+                    paths.append(path)
+
+                # Batch expansion and prediction
+                values = self._evaluate_and_expand_batch(leaves, leaf_states)
+                
+                # Backpropagate and remove virtual loss
+                for path, value in zip(paths, values):
+                    for node in path[1:]: # Don't apply to root
+                        node.virtual_loss -= 3
+                    self._backpropagate(path, value)
 
         return self._build_policy(root, temperature)
 
@@ -299,54 +331,82 @@ class MCTS:
         moves = list(node.children.keys())
         children = list(node.children.values())
         
-        counts = np.array([c.visit_count for c in children])
+        # Effective visits include virtual loss to encourage exploration
+        v_counts = np.array([c.visit_count + c.virtual_loss for c in children])
         priors = np.array([c.prior for c in children])
         q_values = np.array([-c.q_value for c in children])
         
-        exploration = self.c_puct * priors * np.sqrt(node.visit_count) / (1 + counts)
+        exploration = self.c_puct * priors * np.sqrt(node.visit_count + node.virtual_loss + 1) / (1 + v_counts)
         scores = q_values + exploration
         
         best_idx = np.argmax(scores)
         return moves[best_idx], children[best_idx]
 
-    def _evaluate_and_expand(self, node: MCTSNode, state: np.ndarray) -> float:
-        terminal = self._terminal_value(node, state)
-        if terminal is not None:
-            return terminal
+    def _evaluate_and_expand_batch(self, nodes: list[MCTSNode], states: list[np.ndarray]) -> list[float]:
+        results: list[float] = []
+        to_predict_indices: list[int] = []
+        to_predict_states: list[np.ndarray] = []
+        to_predict_players: list[int] = []
 
-        policy, value = self._predict(state, node.player)
-        valid_mask = (state.flatten() == EMPTY).astype(np.float32)
-        masked_policy = policy * valid_mask
-        total = float(masked_policy.sum())
+        for i, (node, state) in enumerate(zip(nodes, states)):
+            # Terminal check
+            if node.move_from_parent is not None:
+                prev_player = other_player(node.player)
+                if is_win(state, prev_player, last_move=node.move_from_parent):
+                    results.append(-1.0)
+                    continue
+            if is_draw(state):
+                results.append(0.0)
+                continue
+            
+            # If already expanded (can happen in batch), use cached value estimation or just predict again
+            # In simple batched MCTS, we filter out duplicates or just re-predict.
+            # Here we just mark for prediction for simplicity.
+            results.append(0.0) # Placeholder
+            to_predict_indices.append(i)
+            to_predict_states.append(state)
+            to_predict_players.append(node.player)
 
-        if total <= 0:
-            masked_policy = valid_mask / valid_mask.sum()
-        else:
-            masked_policy /= total
+        if to_predict_states:
+            policies, values = self._predict_batch(to_predict_states, to_predict_players)
+            for idx, policy, value in zip(to_predict_indices, policies, values):
+                node = nodes[idx]
+                state = states[idx]
+                
+                # Expand
+                if not node.is_expanded:
+                    valid_mask = (state.flatten() == EMPTY).astype(np.float32)
+                    masked_policy = policy * valid_mask
+                    total = float(masked_policy.sum())
+                    if total <= 0:
+                        masked_policy = valid_mask / valid_mask.sum()
+                    else:
+                        masked_policy /= total
 
-        node.is_expanded = True
-        for idx in np.where(valid_mask > 0)[0]:
-            r, c = divmod(int(idx), BOARD_SIZE)
-            node.children[(r, c)] = MCTSNode(
-                player=other_player(node.player),
-                parent=node,
-                prior=float(masked_policy[idx]),
-                move_from_parent=(r, c),
-            )
+                    node.is_expanded = True
+                    for move_idx in np.where(valid_mask > 0)[0]:
+                        r, c = divmod(int(move_idx), BOARD_SIZE)
+                        node.children[(r, c)] = MCTSNode(
+                            player=other_player(node.player),
+                            parent=node,
+                            prior=float(masked_policy[move_idx]),
+                            move_from_parent=(r, c),
+                        )
+                
+                results[idx] = value
 
-        return value
+        return results
 
-    def _predict(self, grid: np.ndarray, player: int) -> tuple[np.ndarray, float]:
-        state = encode_board(grid, player)
-        state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+    def _predict_batch(self, grids: list[np.ndarray], players: list[int]) -> tuple[np.ndarray, np.ndarray]:
+        # Encode all states in the batch
+        batch_states = np.stack([encode_board(g, p) for g, p in zip(grids, players)])
+        state_tensor = torch.as_tensor(batch_states, dtype=torch.float32, device=self.device)
 
-        self.network.eval()
-        with torch.no_grad():
-            policy_logits, value = self.network(state_tensor)
-
-        policy = torch.softmax(policy_logits.squeeze(0), dim=0).cpu().numpy().astype(np.float32)
-        value_scalar = float(value.squeeze(0).item())
-        return policy, value_scalar
+        policy_logits, values = self.network(state_tensor)
+        
+        policies = torch.softmax(policy_logits, dim=1).cpu().numpy()
+        value_scalars = values.squeeze(1).cpu().numpy()
+        return policies, value_scalars
 
     def _terminal_value(self, node: MCTSNode, state: np.ndarray) -> float | None:
         if node.move_from_parent is not None:
@@ -395,8 +455,8 @@ class AlphaZeroAgent:
         lr: float = 1e-3,
         lr_decay_steps: int = 2000,
         lr_decay_gamma: float = 0.5,
-        num_simulations: int = 200,
-        c_puct: float = 1.5,
+        num_simulations: int = 80,
+        c_puct: float = 1.4,
         num_res_blocks: int = 5,
         channels: int = 64,
     ) -> None:
@@ -428,10 +488,11 @@ class AlphaZeroAgent:
             return 0.0
 
         states, policies, rewards = self.buffer.sample(batch_size)
-        state_tensors = torch.tensor(states, dtype=torch.float32).to(self.device)
-        policy_targets = torch.tensor(policies, dtype=torch.float32).to(self.device)
-        value_targets = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+        state_tensors = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+        policy_targets = torch.as_tensor(policies, dtype=torch.float32, device=self.device)
+        value_targets = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).unsqueeze(1)
 
+        self.network.train() # Set to train mode
         policy_pred, value_pred = self.network(state_tensors)
         policy_loss = -torch.sum(
             policy_targets * torch.log_softmax(policy_pred, dim=1),
@@ -444,14 +505,24 @@ class AlphaZeroAgent:
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
+        self.network.eval() # Return to eval mode for MCTS
         return float(loss.item())
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        torch.save(self.network.state_dict(), path)
+        torch.save({
+            'network': self.network.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+        }, path)
 
     def load(self, path: str) -> None:
-        self.network.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        self.network.load_state_dict(checkpoint['network'])
+        if 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if 'scheduler' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
         self.network.eval()
 
     def save_buffer(self, path: str) -> None:
@@ -597,8 +668,8 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=100, help="Save checkpoint every N episodes")
     parser.add_argument("--model-path", default="models/rl_agent.pth", help="Model save path")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
-    parser.add_argument("--mcts-sims", type=int, default=200, help="MCTS simulations per move")
-    parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration coefficient")
+    parser.add_argument("--mcts-sims", type=int, default=80, help="MCTS simulations per move")
+    parser.add_argument("--c-puct", type=float, default=1.4, help="PUCT exploration coefficient")
     parser.add_argument("--exploration-moves", type=int, default=12, help="Opening moves sampled stochastically")
     parser.add_argument("--num-res-blocks", type=int, default=5, help="Number of residual blocks")
     parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
@@ -609,6 +680,10 @@ def main() -> None:
         args.episodes = MAX_EPISODES
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        torch.set_num_threads(1)
+        print("CPU mode: torch.num_threads set to 1")
+    
     model_path = args.model_path
     meta_path = os.path.join(os.path.dirname(model_path) or ".", "checkpoint.json")
     buffer_path = model_path.replace(".pth", "_buffer.npz")
