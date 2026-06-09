@@ -2,7 +2,7 @@ import pygame
 from src.game.board import Board
 from src.game.rules import is_win, is_draw
 from src.game.constants import X, O, BOARD_SIZE
-from src.ui.renderer import draw_board, draw_status, get_screen_size, get_cell_pos
+from src.ui.renderer import draw_board, draw_status, get_screen_size, get_cell_pos, CELL_SIZE, MARGIN
 from src.ai.base import Agent
 
 
@@ -45,8 +45,8 @@ def main(
             elif event.type == pygame.MOUSEBUTTONDOWN and not game_over:
                 if isinstance(p1 if current_player == X else p2, HumanAgent):
                     x, y = event.pos
-                    col = round((x - 40) / 60)
-                    row = round((y - 40) / 60)
+                    col = int((x - MARGIN + CELL_SIZE // 2) / CELL_SIZE)
+                    row = int((y - MARGIN + CELL_SIZE // 2) / CELL_SIZE)
                     if 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE and board.is_empty(row, col):
                         board.place(row, col, current_player)
                         last_move = (row, col)

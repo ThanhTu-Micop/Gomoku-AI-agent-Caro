@@ -1,5 +1,4 @@
 import numpy as np
-import random
 import time
 from src.ai.base import Agent
 from src.ai.heuristic import evaluate
@@ -18,11 +17,9 @@ class MinimaxAgent(Agent):
         self.current_hash = 0
 
     def _get_hash(self, grid: np.ndarray) -> int:
-        h = 0
-        for r in range(BOARD_SIZE):
-            for c in range(BOARD_SIZE):
-                h ^= self.zobrist_table[r, c, grid[r, c]]
-        return h
+        """Compute Zobrist hash via vectorized gather."""
+        rows, cols = np.mgrid[0:BOARD_SIZE, 0:BOARD_SIZE]
+        return int(np.bitwise_xor.reduce(self.zobrist_table[rows, cols, grid].ravel()))
 
     def get_move(self, grid: np.ndarray, player: int) -> tuple[int, int]:
         self.start_time = time.time()
@@ -52,16 +49,14 @@ class MinimaxAgent(Agent):
             try:
                 for move in ordered_moves:
                     r, c = move
-                    # Update hash and grid
                     old_val = grid[r, c]
                     self.current_hash ^= self.zobrist_table[r, c, old_val] ^ self.zobrist_table[r, c, player]
                     grid[r, c] = player
-                    
-                    score = self._minimax(grid, depth - 1, alpha, beta, False, player, last_move=(r, c))
-                    
-                    # Restore hash and grid
-                    grid[r, c] = old_val
-                    self.current_hash ^= self.zobrist_table[r, c, player] ^ self.zobrist_table[r, c, old_val]
+                    try:
+                        score = self._minimax(grid, depth - 1, alpha, beta, False, player, last_move=(r, c))
+                    finally:
+                        grid[r, c] = old_val
+                        self.current_hash ^= self.zobrist_table[r, c, player] ^ self.zobrist_table[r, c, old_val]
 
                     if score > max_eval:
                         max_eval = score
@@ -74,7 +69,6 @@ class MinimaxAgent(Agent):
                 if current_best_move:
                     best_move_overall = current_best_move
                 
-                # If we found a win, no need to search deeper
                 if max_eval >= 500000:
                     break
                     
@@ -132,17 +126,18 @@ class MinimaxAgent(Agent):
         best_move = None
         if maximizing:
             max_eval = -float("inf")
+            orig_alpha = alpha
             for move in moves:
                 r, c = move
                 old_val = grid[r, c]
                 self.current_hash ^= self.zobrist_table[r, c, old_val] ^ self.zobrist_table[r, c, current_player]
                 grid[r, c] = current_player
-                
-                eval_score = self._minimax(grid, depth - 1, alpha, beta, False, ai_player, last_move=(r, c))
-                
-                grid[r, c] = old_val
-                self.current_hash ^= self.zobrist_table[r, c, current_player] ^ self.zobrist_table[r, c, old_val]
-                
+                try:
+                    eval_score = self._minimax(grid, depth - 1, alpha, beta, False, ai_player, last_move=(r, c))
+                finally:
+                    grid[r, c] = old_val
+                    self.current_hash ^= self.zobrist_table[r, c, current_player] ^ self.zobrist_table[r, c, old_val]
+
                 if eval_score > max_eval:
                     max_eval = eval_score
                     best_move = move
@@ -150,22 +145,22 @@ class MinimaxAgent(Agent):
                 if beta <= alpha:
                     break
             
-            # Store in TT
-            self._store_tt(self.current_hash, max_eval, depth, alpha, beta, best_move)
+            self._store_tt(self.current_hash, max_eval, depth, orig_alpha, beta, best_move)
             return max_eval
         else:
             min_eval = float("inf")
+            orig_beta = beta
             for move in moves:
                 r, c = move
                 old_val = grid[r, c]
                 self.current_hash ^= self.zobrist_table[r, c, old_val] ^ self.zobrist_table[r, c, current_player]
                 grid[r, c] = current_player
-                
-                eval_score = self._minimax(grid, depth - 1, alpha, beta, True, ai_player, last_move=(r, c))
-                
-                grid[r, c] = old_val
-                self.current_hash ^= self.zobrist_table[r, c, current_player] ^ self.zobrist_table[r, c, old_val]
-                
+                try:
+                    eval_score = self._minimax(grid, depth - 1, alpha, beta, True, ai_player, last_move=(r, c))
+                finally:
+                    grid[r, c] = old_val
+                    self.current_hash ^= self.zobrist_table[r, c, current_player] ^ self.zobrist_table[r, c, old_val]
+
                 if eval_score < min_eval:
                     min_eval = eval_score
                     best_move = move
@@ -173,8 +168,7 @@ class MinimaxAgent(Agent):
                 if beta <= alpha:
                     break
             
-            # Store in TT
-            self._store_tt(self.current_hash, min_eval, depth, alpha, beta, best_move)
+            self._store_tt(self.current_hash, min_eval, depth, alpha, orig_beta, best_move)
             return min_eval
 
     def _store_tt(self, h, score, depth, alpha, beta, move):

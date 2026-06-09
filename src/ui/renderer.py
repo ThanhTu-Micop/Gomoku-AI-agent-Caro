@@ -54,8 +54,13 @@ def draw_board(screen: pygame.Surface, grid, last_move: tuple[int, int] | None =
         screen.blit(highlight, (x - STONE_RADIUS, y - STONE_RADIUS))
 
 
+_status_font = None
+
+
 def draw_status(screen: pygame.Surface, message: str) -> None:
-    font = pygame.font.SysFont(None, 32)
-    text = font.render(message, True, X_COLOR)
-    text_rect = text.get_rect(center=(get_screen_size()[0] // 2, get_screen_size()[1] - 20))
+    global _status_font
+    if _status_font is None:
+        _status_font = pygame.font.SysFont(None, 32)
+    text = _status_font.render(message, True, X_COLOR)
+    text_rect = text.get_rect(center=(get_screen_size()[0] // 2, get_screen_size()[1] + 20))
     screen.blit(text, text_rect)

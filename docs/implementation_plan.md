@@ -1,4 +1,6 @@
-# Kế hoạch nâng cấp RL Agent → AlphaZero
+# Kế hoạch triển khai Gomoku AI Agent
+
+> **Cập nhật lần cuối:** 2026-06-09 — bổ sung Phase 5 Bug Fixes sau code review.
 
 ## Tổng quan
 
@@ -17,12 +19,19 @@ Tư tưởng cốt lõi: **MCTS giả lập suy nghĩ sâu, ResNet đánh giá t
 | File | Hành động | Mô tả |
 |------|-----------|-------|
 | `src/ai/rl_agent.py` | **MODIFY** | Thay `GomokuNet` → `ResNet`, thêm augmentation, thêm `AlphaZeroAgent` |
-| `src/ai/mcts.py` | **NEW** | Thuật toán MCTS + PUCT |
+| `src/ai/mcts.py` | **CREATE** | Thuật toán MCTS + PUCT *(đã tạo)* |
 | `src/scripts/train_rl.py` | **MODIFY** | Bỏ Epsilon-Greedy, dùng MCTS self-play pipeline |
 | `colab_train.py` | **MODIFY** | Đồng bộ kiến trúc ResNet + logic MCTS self-play |
 | `src/scripts/compare.py` | **MODIFY** | Hỗ trợ `AlphaZeroAgent` + tham số MCTS simulations |
 | `src/ai/base.py` | GIỮ NGUYÊN | Interface `Agent` không đổi |
 | `src/ui/gui.py` | **MODIFY** | Nhập và sử dụng `AlphaZeroAgent` |
+| `src/ai/minimax.py` | **FIX** | Sửa TT flag logic + grid corruption timeout |
+| `src/ai/heuristic.py` | **FIX** | Bổ sung missing THREE_BLOCKED patterns |
+| `src/game/board.py` | **FIX** | Undo guard chống corrupt move_count |
+| `src/game/rules.py` | **FIX** | `is_game_over()` thêm `last_move` param |
+| `src/ui/renderer.py` | **FIX** | Status text position + cache font |
+| `tests/test_integration.py` | GIỮ NGUYÊN | *(ko đổi)* |
+| `tests/test_rules.py` | GIỮ NGUYÊN | *(ko đổi)* |
 
 ---
 
@@ -379,6 +388,154 @@ python src/main.py --ai alphazero --model models/rl_agent.pth --mcts-sims 200
 **Acceptance criteria:**
 - [x] Người chơi đấu được với AlphaZero Agent qua GUI
 - [x] AI suy nghĩ < 5 giây/nước đi (200 sims trên CPU)
+
+---
+
+---
+
+## Phase 5: Bug Fixes (Code Review - 2026-06-09)
+
+Sau khi kiểm tra tính logic toàn bộ codebase, phát hiện và sửa các bugs sau:
+
+### Task 5.1 — Minimax: Transposition Table flag sai
+
+**File:** `src/ai/minimax.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🔴 CRITICAL
+
+**Vấn đề:** `alpha`/`beta` bị mutate trước khi truyền vào `_store_tt()`:
+```python
+# Trước (sai): alpha và beta đã bị thay đổi trong loop
+alpha = max(alpha, eval_score)  # alpha tăng dần
+self._store_tt(h, score, depth, alpha, beta, move)
+# → score <= alpha LUÔN đúng → flag LUÔN là UPPERBOUND
+```
+
+**Fix:** Lưu `orig_alpha`/`orig_beta` trước loop, dùng giá trị gốc cho flag determination.
+
+---
+
+### Task 5.2 — Minimax: Grid corruption khi timeout
+
+**File:** `src/ai/minimax.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🔴 CRITICAL
+
+**Vấn đề:** Khi `TimeoutError` được raise từ `_minimax()`, dòng `grid[r, c] = old_val` bị bỏ qua, để lại phantom stone trên board.
+
+**Fix:** Bọc `_minimax()` trong `try/finally` để grid luôn được restore:
+```python
+try:
+    score = self._minimax(...)
+finally:
+    grid[r, c] = old_val
+    self.current_hash ^= ...  # restore hash
+```
+
+---
+
+### Task 5.3 — compare.py: Uninitialized `winner`
+
+**File:** `src/scripts/compare.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🔴 CRITICAL
+
+**Vấn đề:** Nếu `agent.get_move()` trả về `None`, `winner` chưa được gán → `UnboundLocalError` khi log.
+
+**Fix:** Thêm `winner = None` trước `while True`.
+
+---
+
+### Task 5.4 — GUI: Status text render sai vị trí
+
+**File:** `src/ui/renderer.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🟠 MEDIUM
+
+**Vấn đề:** Screen được tạo với chiều cao `size + 40` (dành 40px cho status bar ở đáy), nhưng `draw_status` render text ở `y = size - 20` (nằm trong grid). 40px phía dưới không được dùng, text bị đè lên board.
+
+**Fix:** Đổi `get_screen_size()[1] - 20` → `get_screen_size()[1] + 20` để text nằm giữa vùng 40px phía dưới. Cache font tĩnh.
+
+---
+
+### Task 5.5 — GUI: Magic numbers + Banker's rounding
+
+**File:** `src/ui/gui.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🟡 LOW
+
+**Vấn đề:** Click-to-cell dùng hardcode `40` và `60` thay vì `MARGIN`/`CELL_SIZE` từ `renderer.py`. `round()` dùng banker's rounding gây lỗi ở biên ô.
+
+**Fix:** Import `MARGIN, CELL_SIZE` từ `renderer`. Dùng `int((x - MARGIN + CELL_SIZE // 2) / CELL_SIZE)` thay `round()`.
+
+---
+
+### Task 5.6 — Heuristic: Thiếu THREE_BLOCKED patterns
+
+**File:** `src/ai/heuristic.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🟠 MEDIUM
+
+**Vấn đề:** Comment đề cập `1101`, `1011` nhưng không có trong list patterns. Các blocked-three dạng `21110`, `01112` cũng bị thiếu.
+
+**Fix:** Bổ sung `"21110", "01112", "1101", "1011"` vào `blocked_threes`.
+
+---
+
+### Task 5.7 — Board: Undo không kiểm tra ô trống
+
+**File:** `src/game/board.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🟠 MEDIUM
+
+**Vấn đề:** `undo()` luôn `move_count -= 1` dù ô đã EMPTY, gây corrupt `move_count` và sai `is_full()`.
+
+**Fix:**
+```python
+def undo(self, row: int, col: int) -> None:
+    if self.grid[row, col] == EMPTY:
+        return
+    self.grid[row, col] = EMPTY
+    self.move_count -= 1
+```
+
+---
+
+### Task 5.8 — Rules: `is_game_over()` không dùng `last_move`
+
+**File:** `src/game/rules.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🟠 MEDIUM
+
+**Vấn đề:** `is_game_over()` luôn scan toàn bộ board 2 lần (X và O), không dùng `last_move` optimization. Đồng thời là dead code — không function nào gọi nó.
+
+**Fix:** Thêm `last_move=None` param, dùng optimized path khi có last_move. Giữ backward compatibility.
+
+---
+
+### Task 5.9 — rl_agent: `scheduler.step()` gọi mỗi batch
+
+**File:** `src/ai/rl_agent.py`  
+**Status:** ⬜ Giữ nguyên  
+**Severity:** 🟡 LOW
+
+**Vấn đề:** `scheduler.step()` được gọi trong `train_step()` (mỗi batch), trong khi `step_size=2000` được thiết kế cho epoch-based decay.
+
+**Quyết định:** Giữ nguyên — với `train_rl.py` gọi `train_step` 1 lần/episode và `step_size=2000`, LR decay sau 2000 episodes (~2M samples) là phù hợp cho self-play. Không phải bug thực sự với cách dùng hiện tại.
+
+---
+
+### File không sửa (không có bug)
+
+| File | Lý do |
+|------|-------|
+| `src/ai/base.py` | Interface đúng, không lỗi |
+| `src/ai/mcts.py` | MCTS logic đúng, không lỗi |
+| `src/ai/rl_agent.py` | Chỉ có minor design issue (xem Task 5.9) |
+| `src/game/constants.py` | 4 dòng constants, không thể sai |
+| `src/utils/logger.py` | Log path phụ thuộc CWD — design choice, không phải bug |
+| `src/utils/replay_buffer.py` | Đúng, không lỗi |
+| `src/scripts/train_rl.py` | File handle leak — minor, mức độ ảnh hưởng thấp |
 
 ---
 

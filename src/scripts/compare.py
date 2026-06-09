@@ -38,6 +38,8 @@ def play_match(
     times_by_stage = {"early": [], "mid": [], "end": []}
     moves_history = []
 
+    winner = None
+
     while True:
         stage = get_game_stage(move_count)
         start_time = time.time()

@@ -24,6 +24,8 @@ class Board:
         return True
 
     def undo(self, row: int, col: int) -> None:
+        if self.grid[row, col] == EMPTY:
+            return
         self.grid[row, col] = EMPTY
         self.move_count -= 1
 
