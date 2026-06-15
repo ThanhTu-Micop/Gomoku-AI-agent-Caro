@@ -45,7 +45,7 @@ def play_match(
         start_time = time.time()
 
         agent = ai1 if current_player == X else ai2
-        if isinstance(agent, (RLAgent, AlphaZeroAgent)):
+        if isinstance(agent, (AlphaZeroAgent, RLAgent)):
             move = agent.get_move(board.grid.copy(), current_player, deterministic=True)
         else:
             move = agent.get_move(board.grid.copy(), current_player)
@@ -92,34 +92,40 @@ def main() -> None:
     parser.add_argument(
         "--agent-type",
         type=str,
-        choices=["minimax", "rl", "alphazero"],
-        default="rl",
-        help="Opponent agent type",
+        choices=["rl", "alphazero"],
+        default="alphazero",
+        help="Opponent agent type (rl=fast policy net, alphazero=MCTS)",
     )
     parser.add_argument("--rl-model", type=str, default=None, help="RL model checkpoint path")
     parser.add_argument("--mcts-sims", type=int, default=200, help="MCTS simulations for AlphaZero")
     parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration coefficient")
+    parser.add_argument("--num-res-blocks", type=int, default=5, help="ResNet residual blocks")
+    parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
     parser.add_argument("--log-replay", action="store_true", help="Log game replays to JSONL")
     args = parser.parse_args()
 
     ai1 = MinimaxAgent(depth=args.depth)
     ai1_name = f"Minimax(d={args.depth})"
 
-    if args.agent_type == "minimax":
-        ai2 = MinimaxAgent(depth=2)
-        ai2_name = "Minimax(d=2)"
-    elif args.agent_type == "rl":
+    if args.agent_type == "rl":
         ai2 = RLAgent()
         ai2_name = "RL Agent"
         if args.rl_model:
             ai2.load(args.rl_model)
+            print(f"Loaded RL model from {args.rl_model}")
         else:
             print("Warning: --rl-model not provided. Using untrained RL Agent.")
     else:
-        ai2 = AlphaZeroAgent(num_simulations=args.mcts_sims, c_puct=args.c_puct)
+        ai2 = AlphaZeroAgent(
+            num_simulations=args.mcts_sims,
+            c_puct=args.c_puct,
+            num_res_blocks=args.num_res_blocks,
+            channels=args.channels,
+        )
         ai2_name = f"AlphaZero(sims={args.mcts_sims})"
         if args.rl_model:
             ai2.load(args.rl_model)
+            print(f"Loaded RL model from {args.rl_model}")
         else:
             print("Warning: --rl-model not provided. Using untrained AlphaZero Agent.")
 

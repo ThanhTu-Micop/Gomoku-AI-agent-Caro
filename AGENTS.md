@@ -44,8 +44,10 @@ src/
 |---|---|
 | Install deps | `pip install -r requirements.txt` |
 | Run GUI | `python src/main.py` |
+| Run GUI (Human vs AI Minimax) | `python src/main.py --mode hvai --ai minimax --depth 3` |
+| Run GUI (Human vs AI AlphaZero) | `python src/main.py --mode hvai --ai alphazero --rl-model models/rl_agent.pth --mcts-sims 80 --c-puct 1.4` |
 | Train RL | `python src/scripts/train_rl.py` |
-| Compare agents | `python src/scripts/compare.py` |
+| Compare agents | `python src/scripts/compare.py --rl-model models/rl_agent.pth --depth 2 --mcts-sims 80 --c-puct 1.4 --num-res-blocks 5 --channels 64` |
 | Run tests | `pytest tests/` |
 
 ## Code conventions
@@ -136,7 +138,7 @@ Download `rl_agent.pth` ve may, dat vao `models/` trong project local.
 ### F. So sanh tren may local
 
 ```bash
-python src/scripts/compare.py --matches 20 --rl-model models/rl_agent.pth
+python src/scripts/compare.py --matches 20 --rl-model models/rl_agent.pth --depth 2 --agent-type alphazero --mcts-sims 80 --c-puct 1.4 --num-res-blocks 5 --channels 64
 ```
 
 ### G. Luu y

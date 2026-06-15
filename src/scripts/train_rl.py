@@ -1,5 +1,6 @@
 import argparse
 import csv
+import json
 import os
 import sys
 from datetime import datetime
@@ -101,6 +102,38 @@ def play_self_play_game(
 
     return aug_states, aug_policies, aug_rewards, winner, moves
 
+def validate_agent(agent: AlphaZeroAgent, num_matches: int = 10, sims: int = 50) -> float:
+    """Validate agent against a random player."""
+    original_sims = agent.mcts.num_simulations
+    agent.set_num_simulations(sims)
+    wins = 0
+    try:
+        for _ in range(num_matches):
+            board = Board()
+            current_player = X
+            while True:
+                if current_player == X:
+                    # Agent is always X for validation simplicity
+                    r, c = agent.get_move(board.grid, current_player, deterministic=True)
+                else:
+                    # Random player
+                    valid = board.get_valid_moves()
+                    if not valid:
+                        break
+                    r, c = valid[np.random.randint(len(valid))]
+
+                board.place(r, c, current_player)
+                if is_win(board.grid, current_player, last_move=(r, c)):
+                    if current_player == X:
+                        wins += 1
+                    break
+                if is_draw(board.grid):
+                    break
+                current_player = O if current_player == X else X
+    finally:
+        agent.set_num_simulations(original_sims)
+    return wins / num_matches
+
 
 def _ensure_log_dir() -> None:
     os.makedirs("logs", exist_ok=True)
@@ -122,6 +155,7 @@ def main() -> None:
     parser.add_argument("--exploration-moves", type=int, default=12, help="Opening moves sampled with temperature=1")
     parser.add_argument("--num-res-blocks", type=int, default=5, help="Number of residual blocks")
     parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
+    parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -135,10 +169,29 @@ def main() -> None:
         num_res_blocks=args.num_res_blocks,
         channels=args.channels,
     )
-    if os.path.exists(args.model_path):
+    model_path = args.model_path
+    meta_path = os.path.join(os.path.dirname(model_path) or ".", "checkpoint.json")
+    buffer_path = model_path.replace(".pth", "_buffer.npz")
+
+    start_episode = 1
+    win_counts: dict[str, int] = {"X": 0, "O": 0, "Draw": 0}
+
+    if args.resume and os.path.exists(model_path) and os.path.exists(meta_path):
         try:
-            agent.load(args.model_path)
-            print(f"Loaded existing model from {args.model_path}")
+            agent.load(model_path)
+            if os.path.exists(buffer_path):
+                agent.load_buffer(buffer_path)
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            start_episode = int(meta.get("episodes_done", 0)) + 1
+            win_counts = meta.get("win_counts", win_counts)
+            print(f"Resumed from episode {start_episode - 1}")
+        except Exception as e:
+            print(f"Could not resume: {e}, starting from scratch")
+    elif os.path.exists(model_path):
+        try:
+            agent.load(model_path)
+            print(f"Loaded existing model from {model_path}")
         except Exception:
             print("Could not load model, starting from scratch")
 
@@ -150,9 +203,9 @@ def main() -> None:
         writer.writeheader()
 
     best_loss = float("inf")
-    no_improve = 0
+    losses: list[float] = []
 
-    for episode in range(1, args.episodes + 1):
+    for episode in range(start_episode, start_episode + args.episodes):
         states, policies, rewards, winner, moves = play_self_play_game(
             agent,
             exploration_moves=args.exploration_moves,
@@ -161,19 +214,12 @@ def main() -> None:
         log_game_replay(args.replay_log, episode, moves, winner)
 
         winner_name = "X" if winner == X else ("O" if winner == O else "Draw")
+        win_counts[winner_name] = win_counts.get(winner_name, 0) + 1
+
         loss = 0.0
         if len(agent.buffer) >= args.batch_size:
             loss = agent.train_step(batch_size=args.batch_size)
-
-            if args.patience is not None:
-                if loss < best_loss:
-                    best_loss = loss
-                    no_improve = 0
-                else:
-                    no_improve += 1
-                if no_improve >= args.patience:
-                    print(f"Early stopping at episode {episode}")
-                    break
+            losses.append(loss)
 
         writer.writerow(
             {
@@ -187,22 +233,42 @@ def main() -> None:
         )
 
         if episode % 50 == 0 or episode == 1:
+            avg_loss = sum(losses[-50:]) / min(len(losses), 50) if losses else 0.0
             print(
-                f"Episode {episode:4d}/{args.episodes}, "
-                f"Loss: {loss:.4f}, "
+                f"Episode {episode:4d}/{start_episode + args.episodes - 1}, "
+                f"Loss: {avg_loss:.4f}, "
                 f"Buffer: {len(agent.buffer)}, "
-                f"Sims: {args.mcts_sims}"
+                f"X: {win_counts['X']} O: {win_counts['O']} D: {win_counts['Draw']}"
             )
 
         if episode % args.save_every == 0:
             agent.save(args.model_path)
-            if args.save_buffer:
-                agent.save_buffer(args.model_path.replace(".pth", "_buffer.npz"))
-            print("  -> Saved checkpoint")
+            agent.save_buffer(buffer_path)
+            with open(meta_path, "w") as f:
+                json.dump(
+                    {
+                        "episodes_done": episode,
+                        "win_counts": win_counts,
+                        "mcts_sims": args.mcts_sims,
+                        "c_puct": args.c_puct,
+                    },
+                    f,
+                )
+            win_rate = validate_agent(agent, sims=50)
+            print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
 
     agent.save(args.model_path)
-    if args.save_buffer:
-        agent.save_buffer(args.model_path.replace(".pth", "_buffer.npz"))
+    agent.save_buffer(buffer_path)
+    with open(meta_path, "w") as f:
+        json.dump(
+            {
+                "episodes_done": start_episode + args.episodes - 1,
+                "win_counts": win_counts,
+                "mcts_sims": args.mcts_sims,
+                "c_puct": args.c_puct,
+            },
+            f,
+        )
     train_log.close()
     print(f"Training complete. Model saved to {args.model_path}")
 

@@ -206,9 +206,9 @@ class RLAgent(Agent):
         torch.save(self.network.state_dict(), path)
 
     def load(self, path: str) -> None:
-        self.network.load_state_dict(
-            torch.load(path, map_location=self.device, weights_only=True)
-        )
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        state_dict = checkpoint.get("network", checkpoint)
+        self.network.load_state_dict(state_dict)
         self.network.eval()
 
     def save_buffer(self, path: str) -> None:
@@ -294,6 +294,7 @@ class AlphaZeroAgent(Agent):
         policy_targets = torch.tensor(policies, dtype=torch.float32).to(self.device)
         value_targets = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
 
+        self.network.train()
         policy_pred, value_pred = self.network(state_tensors)
         policy_loss = -torch.sum(
             policy_targets * torch.log_softmax(policy_pred, dim=1),
@@ -306,6 +307,7 @@ class AlphaZeroAgent(Agent):
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
+        self.network.eval()
         return loss.item()
 
     def get_lr(self) -> float:
@@ -316,9 +318,9 @@ class AlphaZeroAgent(Agent):
         torch.save(self.network.state_dict(), path)
 
     def load(self, path: str) -> None:
-        self.network.load_state_dict(
-            torch.load(path, map_location=self.device, weights_only=True)
-        )
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        state_dict = checkpoint.get("network", checkpoint)
+        self.network.load_state_dict(state_dict)
         self.network.eval()
 
     def save_buffer(self, path: str) -> None:

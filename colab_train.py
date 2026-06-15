@@ -142,7 +142,8 @@ class ReplayBuffer:
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        np.savez_compressed(
+        # np.savez is much faster than np.savez_compressed for large buffers
+        np.savez(
             path,
             states=np.array(self.states),
             policies=np.array(self.policies),
@@ -402,10 +403,11 @@ class MCTS:
         batch_states = np.stack([encode_board(g, p) for g, p in zip(grids, players)])
         state_tensor = torch.as_tensor(batch_states, dtype=torch.float32, device=self.device)
 
-        policy_logits, values = self.network(state_tensor)
+        with torch.amp.autocast(device_type="cuda" if "cuda" in self.device else "cpu"):
+            policy_logits, values = self.network(state_tensor)
         
-        policies = torch.softmax(policy_logits, dim=1).cpu().numpy()
-        value_scalars = values.squeeze(1).cpu().numpy()
+        policies = torch.softmax(policy_logits.detach(), dim=1).cpu().numpy()
+        value_scalars = values.detach().squeeze(1).cpu().numpy()
         return policies, value_scalars
 
     def _terminal_value(self, node: MCTSNode, state: np.ndarray) -> float | None:
@@ -479,6 +481,7 @@ class AlphaZeroAgent:
             num_simulations=num_simulations,
             c_puct=c_puct,
         )
+        self.scaler = torch.amp.GradScaler("cuda") if "cuda" in device else None
 
     def set_num_simulations(self, num_simulations: int) -> None:
         self.mcts.num_simulations = num_simulations
@@ -493,17 +496,26 @@ class AlphaZeroAgent:
         value_targets = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).unsqueeze(1)
 
         self.network.train() # Set to train mode
-        policy_pred, value_pred = self.network(state_tensors)
-        policy_loss = -torch.sum(
-            policy_targets * torch.log_softmax(policy_pred, dim=1),
-            dim=1,
-        ).mean()
-        value_loss = nn.MSELoss()(value_pred, value_targets)
-        loss = policy_loss + value_loss
+        
+        device_type = "cuda" if "cuda" in self.device else "cpu"
+        with torch.amp.autocast(device_type=device_type):
+            policy_pred, value_pred = self.network(state_tensors)
+            policy_loss = -torch.sum(
+                policy_targets * torch.log_softmax(policy_pred, dim=1),
+                dim=1,
+            ).mean()
+            value_loss = nn.MSELoss()(value_pred, value_targets)
+            loss = policy_loss + value_loss
 
         self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        if self.scaler:
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            self.optimizer.step()
+            
         self.scheduler.step()
         self.network.eval() # Return to eval mode for MCTS
         return float(loss.item())
@@ -538,6 +550,7 @@ class AlphaZeroAgent:
 def play_self_play_game(
     agent: AlphaZeroAgent,
     exploration_moves: int = 12,
+    mcts_batch: int = 32,
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[float], int | None, list[tuple[int, int, int]]]:
     board = Board()
     states: list[np.ndarray] = []
@@ -550,7 +563,7 @@ def play_self_play_game(
     while True:
         state = encode_board(board.grid, current_player)
         temperature = 1.0 if move_count < exploration_moves else 0.0
-        pi = agent.mcts.search(board.grid.copy(), current_player, temperature=temperature)
+        pi = agent.mcts.search(board.grid.copy(), current_player, temperature=temperature, batch_size=mcts_batch)
 
         valid_mask = (board.grid.flatten() == EMPTY).astype(np.float32)
         pi = pi * valid_mask
@@ -663,7 +676,7 @@ def validate_agent(agent: AlphaZeroAgent, num_matches: int = 10, sims: int = 50)
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train AlphaZero Gomoku agent (self-play)")
     parser.add_argument("--episodes", type=int, default=1000, help="Total self-play episodes (max 5000)")
-    parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
+    parser.add_argument("--batch-size", type=int, default=128, help="Training batch size")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer capacity")
     parser.add_argument("--save-every", type=int, default=100, help="Save checkpoint every N episodes")
     parser.add_argument("--model-path", default="models/rl_agent.pth", help="Model save path")
@@ -673,6 +686,8 @@ def main() -> None:
     parser.add_argument("--exploration-moves", type=int, default=12, help="Opening moves sampled stochastically")
     parser.add_argument("--num-res-blocks", type=int, default=5, help="Number of residual blocks")
     parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
+    parser.add_argument("--mcts-batch", type=int, default=32, help="MCTS batch size per simulation step")
+    parser.add_argument("--grad-accum", type=int, default=1, help="Gradient accumulation steps (effective batch = batch_size * grad_accum)")
     args = parser.parse_args()
 
     if args.episodes > MAX_EPISODES:
@@ -701,6 +716,15 @@ def main() -> None:
         channels=args.channels,
     )
 
+    if device == "cuda" and hasattr(torch, "compile"):
+        try:
+            print("Compiling model with torch.compile...")
+            compiled = torch.compile(agent.network)
+            agent.network = compiled
+            agent.mcts.network = compiled
+        except Exception as e:
+            print(f"torch.compile failed: {e}")
+
     start_episode = 1
     win_counts: dict[str, int] = {"X": 0, "O": 0, "Draw": 0}
 
@@ -718,7 +742,8 @@ def main() -> None:
     print(f"Device: {device}")
     print(f"Episodes: {start_episode}-{total_target} ({args.episodes} new)")
     print(f"MCTS sims: {args.mcts_sims}, c_puct: {args.c_puct}")
-    print(f"Batch: {args.batch_size}, Buffer: {args.buffer_size}")
+    print(f"MCTS batch: {args.mcts_batch}, Train batch: {args.batch_size}, Grad accum: {args.grad_accum}")
+    print(f"Buffer: {args.buffer_size}")
     print()
 
     losses: list[float] = []
@@ -727,6 +752,7 @@ def main() -> None:
         states, policies, rewards, winner, moves = play_self_play_game(
             agent,
             exploration_moves=args.exploration_moves,
+            mcts_batch=args.mcts_batch,
         )
         agent.buffer.extend(states, policies, rewards)
 
@@ -736,7 +762,9 @@ def main() -> None:
 
         loss = 0.0
         if len(agent.buffer) >= args.batch_size:
-            loss = agent.train_step(batch_size=args.batch_size)
+            sub_batch = max(1, args.batch_size // args.grad_accum)
+            for _ in range(args.grad_accum):
+                loss = agent.train_step(batch_size=sub_batch)
             losses.append(loss)
 
         if episode % args.save_every == 0 or episode == start_episode:
@@ -763,8 +791,12 @@ def main() -> None:
                     },
                     f,
                 )
-            win_rate = validate_agent(agent, sims=50)
-            print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
+            # Only validate every 500 episodes to save time
+            if episode % max(500, args.save_every) == 0:
+                win_rate = validate_agent(agent, sims=50)
+                print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
+            else:
+                print(f"  -> Saved checkpoint")
 
     agent.save(model_path)
     agent.save_buffer(buffer_path)

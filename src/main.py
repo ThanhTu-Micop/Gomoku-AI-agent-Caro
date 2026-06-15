@@ -5,8 +5,7 @@ import sys
 if __package__ is None or __package__ == "":
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.ui.gui import main
-from src.ui.gui import HumanAgent
+from src.ui.gui import main, HumanAgent
 from src.ai.minimax import MinimaxAgent
 from src.ai.rl_agent import AlphaZeroAgent, RLAgent
 

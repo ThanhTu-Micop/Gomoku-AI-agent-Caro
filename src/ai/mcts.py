@@ -55,6 +55,7 @@ class MCTS:
         self.device = device
         self.num_simulations = num_simulations
         self.c_puct = c_puct
+        self.network.eval()
 
     def search(
         self,
@@ -166,8 +167,8 @@ class MCTS:
         state_tensor = torch.as_tensor(batch_states, dtype=torch.float32, device=self.device)
 
         policy_logits, values = self.network(state_tensor)
-        policies = torch.softmax(policy_logits, dim=1).cpu().numpy()
-        value_scalars = values.squeeze(1).cpu().numpy()
+        policies = torch.softmax(policy_logits.detach(), dim=1).cpu().numpy()
+        value_scalars = values.detach().squeeze(1).cpu().numpy()
         return policies, value_scalars
 
     def _terminal_value(self, node: MCTSNode, state: np.ndarray) -> float | None:

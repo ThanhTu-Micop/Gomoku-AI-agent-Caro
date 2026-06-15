@@ -7,6 +7,23 @@ from src.ai.base import Agent
 
 
 AI_DELAY_MS = 500
+WIN_COUNT = 5
+
+
+def check_win_cells(grid, player: int, last_move: tuple[int, int]) -> list[tuple[int, int]] | None:
+    r0, c0 = last_move
+    directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+    for dr, dc in directions:
+        cells = [(r0, c0)]
+        for sign in (1, -1):
+            r, c = r0 + sign * dr, c0 + sign * dc
+            while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and grid[r, c] == player:
+                cells.append((r, c))
+                r += sign * dr
+                c += sign * dc
+        if len(cells) >= WIN_COUNT:
+            return cells
+    return None
 
 
 class HumanAgent(Agent):
@@ -20,8 +37,8 @@ def main(
 ) -> None:
     pygame.init()
     screen_size = get_screen_size()
-    screen = pygame.display.set_mode((screen_size[0], screen_size[1] + 40))
-    pygame.display.set_caption("Gomoku AI Agent")
+    screen = pygame.display.set_mode((screen_size[0], screen_size[1] + 50))
+    pygame.display.set_caption("Cờ Caro 9x9")
     clock = pygame.time.Clock()
 
     board = Board()
@@ -29,6 +46,7 @@ def main(
     game_over = False
     winner = None
     last_move = None
+    win_cells: list[tuple[int, int]] = []
 
     human_agent = HumanAgent()
     p1 = player1 if player1 is not None else human_agent
@@ -53,6 +71,7 @@ def main(
                         if is_win(board.grid, current_player, last_move=(row, col)):
                             game_over = True
                             winner = current_player
+                            win_cells = check_win_cells(board.grid, current_player, last_move) or []
                         elif is_draw(board.grid):
                             game_over = True
                             winner = None
@@ -65,6 +84,7 @@ def main(
                     game_over = False
                     winner = None
                     last_move = None
+                    win_cells = []
                     ai_thinking = False
 
         if not game_over:
@@ -84,6 +104,7 @@ def main(
                         if is_win(board.grid, current_player, last_move=(r, c)):
                             game_over = True
                             winner = current_player
+                            win_cells = check_win_cells(board.grid, current_player, last_move) or []
                         elif is_draw(board.grid):
                             game_over = True
                             winner = None
@@ -91,21 +112,21 @@ def main(
                             current_player = O if current_player == X else X
                     ai_thinking = False
 
-        draw_board(screen, board.grid, last_move)
+        draw_board(screen, board.grid, last_move, win_cells)
 
+        name = "X" if current_player == X else "O"
         if game_over:
             if winner is None:
-                draw_status(screen, "Draw! Press R to restart")
+                draw_status(screen, "Hòa! Nhấn R để chơi lại")
             else:
-                name = "X" if winner == X else "O"
-                draw_status(screen, f"{name} wins! Press R to restart")
+                w_name = "X" if winner == X else "O"
+                draw_status(screen, f"{w_name} thắng! Nhấn R để chơi lại")
         else:
-            name = "X" if current_player == X else "O"
             agent = p1 if current_player == X else p2
             if isinstance(agent, HumanAgent):
-                draw_status(screen, f"{name}'s turn (Human)")
+                draw_status(screen, f"Lượt {name} (Người)")
             else:
-                draw_status(screen, f"{name}'s turn (AI)")
+                draw_status(screen, f"Lượt {name} (AI)")
 
         pygame.display.flip()
         clock.tick(60)

@@ -1,6 +1,6 @@
 # Kế hoạch triển khai Gomoku AI Agent
 
-> **Cập nhật lần cuối:** 2026-06-09 — bổ sung Phase 5 Bug Fixes sau code review.
+> **Cập nhật lần cuối:** 2026-06-10 — bổ sung Phase 5 (5.10, 5.11) và Phase 6: hoàn thiện RL→AlphaZero + tối ưu Colab.
 
 ## Tổng quan
 
@@ -239,8 +239,10 @@ class MCTS:
 ### Task 3.1 — Training Loop mới
 
 **File:** `src/scripts/train_rl.py`  
-**Status:** ✅ Hoàn thành  
+**Status:** ⚠️ Một phần (cần cập nhật)  
 **Phụ thuộc:** Task 1.1, Task 1.2, Task 2.1
+
+> **Ghi chú:** Mặc dù plan đánh dấu ✅, `src/scripts/train_rl.py` hiện tại chưa thực sự được nâng cấp. Vẫn dùng `GomokuNetLegacy` + Epsilon-Greedy, không có MCTS. Toàn bộ logic AlphaZero nằm ở `colab_train.py`. Xem Task 6.1 để cập nhật.
 
 Thay đổi chính so với code hiện tại:
 
@@ -525,6 +527,46 @@ def undo(self, row: int, col: int) -> None:
 
 ---
 
+### Task 5.10 — AlphaZeroAgent: Save format không đồng nhất với Colab
+
+**File:** `src/ai/rl_agent.py` + `colab_train.py`  
+**Status:** ✅ Đã sửa  
+**Severity:** 🟠 MEDIUM
+
+**Vấn đề:** 
+- `colab_train.py` saves dict `{'network', 'optimizer', 'scheduler'}`
+- `AlphaZeroAgent.save()` chỉ lưu raw `state_dict` 
+- Load từ Colab → crash vì nhận dict thay vì state_dict
+
+**Fix:** 
+- `AlphaZeroAgent.load()` xử lý cả 2 format: unwrap dict nếu có key `'network'`
+- `AlphaZeroAgent.save()` giữ nguyên (không cần optimizer/scheduler cho inference-only)
+
+---
+
+### Task 5.11 — Thiếu `train()`/`eval()` mode toggling
+
+**File:** `src/ai/rl_agent.py` + `src/ai/mcts.py`  
+**Status:** ⬜ Chưa làm  
+**Severity:** 🟠 MEDIUM
+
+**Vấn đề:**
+- `AlphaZeroAgent.train_step()` không gọi `self.network.train()` → BatchNorm stats không được cập nhật đúng khi training
+- `MCTS.__init__()` không gọi `self.network.eval()` → BatchNorm dùng running stats sai khi inference
+
+**Fix:**
+```python
+# Trong train_step():
+self.network.train()
+...# forward + backward
+self.network.eval()  # cho MCTS sau đó
+
+# Trong MCTS.__init__():
+self.network.eval()
+```
+
+---
+
 ### File không sửa (không có bug)
 
 | File | Lý do |
@@ -536,6 +578,169 @@ def undo(self, row: int, col: int) -> None:
 | `src/utils/logger.py` | Log path phụ thuộc CWD — design choice, không phải bug |
 | `src/utils/replay_buffer.py` | Đúng, không lỗi |
 | `src/scripts/train_rl.py` | File handle leak — minor, mức độ ảnh hưởng thấp |
+
+---
+
+## Phase 6: Nâng cấp RL → AlphaZero hoàn chỉnh + Tối ưu Colab
+
+Sau Phase 1-4, code AlphaZero đã chạy được trên Colab (`colab_train.py`) nhưng `src/scripts/train_rl.py` chưa được cập nhật. Phase 6 hoàn thiện local training và tối ưu hiệu năng Colab.
+
+### Danh sách task
+
+| Task | File | Mô tả | Priority |
+|:----:|------|-------|:--------:|
+| 6.1 | `src/scripts/train_rl.py` | Hoàn thiện local training script | 🔴 |
+| 6.2 | `src/ai/rl_agent.py`, `colab_train.py` | Unify save/load format | ✅ Đã fix |
+| 6.3 | `src/ai/rl_agent.py`, `src/ai/mcts.py` | train/eval mode toggling | ✅ Đã sửa |
+| 6.4 | `colab_train.py` | AMP — Mixed Precision | ✅ Đã sửa |
+| 6.5 | `colab_train.py` | Tuning batch sizes (MCTS + train) | ✅ Đã sửa |
+| 6.6 | `colab_train.py` | `np.savez` thay `np.savez_compressed` | ✅ Đã sửa |
+| 6.7 | `colab_train.py` | Validation schedule optimization | ✅ Đã sửa |
+| 6.8 | `colab_train.py` | `torch.compile` (PyTorch 2.0+) | ✅ Đã sửa |
+
+---
+
+### Task 6.1 — Hoàn thiện local training script
+
+**File:** `src/scripts/train_rl.py`  
+**Status:** ⬜ Chưa làm  
+**Phụ thuộc:** Phase 3, Task 6.2, Task 6.3
+
+Port toàn bộ logic AlphaZero từ `colab_train.py`:
+
+**Thay đổi chính:**
+
+| Hiện tại (cũ) | Mới |
+|---------------|-----|
+| `GomokuNetLegacy` | `AlphaZeroNet` |
+| `RLAgent` | `AlphaZeroAgent` |
+| Epsilon-Greedy exploration | MCTS search → phân bố pi |
+| Không augment | Augment 8x mỗi ván |
+| Không save metadata | `checkpoint.json` + `--resume` |
+| Không validation | `validate_agent()` vs random |
+
+**Tham số CLI bổ sung:**
+```
+--mcts-sims 80          # MCTS simulations
+--c-puct 1.4            # PUCT exploration coefficient
+--exploration-moves 12  # temperature=1.0 cho N nước đầu
+--resume                # tiếp tục từ checkpoint cuối
+--save-every 100        # tần suất save
+```
+
+**Acceptance criteria:**
+- [ ] `python src/scripts/train_rl.py --episodes 10` chạy self-play không crash
+- [ ] Save model → load bằng `compare.py --agent-type alphazero` được
+- [ ] Resume từ checkpoint hoạt động
+
+---
+
+### Task 6.2 — Unify save/load format
+
+**File:** `src/ai/rl_agent.py` + `colab_train.py`  
+**Status:** ✅ Đã sửa
+
+**Vấn đề:** `colab_train.py` saves dict `{'network': ..., 'optimizer': ..., 'scheduler': ...}`,  
+`AlphaZeroAgent.save()` lưu raw `state_dict()` → không tương thích.
+
+**Fix:** `AlphaZeroAgent.load()` xử lý cả 2 format:
+```python
+checkpoint = torch.load(path)
+if isinstance(checkpoint, dict) and "network" in checkpoint:
+    checkpoint = checkpoint["network"]
+self.network.load_state_dict(checkpoint)
+self.network.eval()
+```
+
+---
+
+### Task 6.3 — train/eval mode toggling + MCTS eval mode
+
+**File:** `src/ai/rl_agent.py` + `src/ai/mcts.py`  
+**Status:** ✅ Đã sửa  
+**Phụ thuộc:** —
+
+**Thay đổi:**
+- `AlphaZeroAgent.train_step()`: thêm `self.network.train()` trước forward, `self.network.eval()` sau backward
+- `MCTS.__init__()`: thêm `self.network.eval()` để đảm bảo BN running stats không bị corrupt khi inference
+
+---
+
+### Task 6.4 — Automatic Mixed Precision (AMP)
+
+**File:** `colab_train.py`  
+**Status:** ✅ Đã sửa  
+**Phụ thuộc:** —
+
+**Thay đổi:**
+- `AlphaZeroAgent.__init__()`: thêm `self.scaler = torch.amp.GradScaler("cuda")`
+- `AlphaZeroAgent.train_step()`: bọc forward trong `torch.amp.autocast`, backward qua `scaler.scale()`
+- `MCTS._predict_batch()`: bọc forward trong `torch.amp.autocast`
+
+---
+
+### Task 6.5 — Tuning batch sizes
+
+**File:** `colab_train.py`  
+**Status:** ✅ Đã sửa  
+**Phụ thuộc:** Task 6.4
+
+**Thay đổi:**
+
+| Parameter | Cũ | Mới |
+|-----------|:--:|:---:|
+| Train batch_size | 64 | `--batch-size 128` |
+| MCTS batch_size | 16 (hardcode) | `--mcts-batch 32` |
+| Gradient accumulation | — | `--grad-accum 1` |
+
+- `--mcts-batch`: batch size cho MCTS simulation (32 mặc định, cao hơn tận dụng GPU)
+- `--grad-accum`: số mini-batch tích lũy gradient trước khi step (effective batch = batch_size / grad_accum)
+- Training loop: chia nhỏ batch thành `grad_accum` mini-batch, forward/backward accum rồi step optimizer
+
+---
+
+### Task 6.6 — Bỏ nén khi save buffer
+
+**File:** `colab_train.py`  
+**Status:** ✅ Đã sửa  
+**Phụ thuộc:** —
+
+**Thay đổi:** `np.savez_compressed` → `np.savez`
+
+---
+
+### Task 6.7 — Validation schedule
+
+**File:** `colab_train.py`  
+**Status:** ✅ Đã sửa  
+**Phụ thuộc:** —
+
+**Thay đổi:** Chỉ validation khi `episode % max(500, save_every) == 0`. Các lần save thông thường in `"Saved checkpoint"` không validate.
+
+---
+
+### Task 6.8 — torch.compile (PyTorch 2.0+)
+
+**File:** `colab_train.py`  
+**Status:** ✅ Đã sửa  
+**Phụ thuộc:** —
+
+**Thay đổi:**
+- Compile network sau khi tạo `AlphaZeroAgent`
+- Gán cả `agent.mcts.network` để MCTS dùng được compiled model
+
+---
+
+### Dự kiến tốc độ (T4 GPU, 200 sims, 5000 episodes)
+
+| Config | episodes/phút | 5000 episodes |
+|--------|:-------------:|:-------------:|
+| **Hiện tại** (FP32, mcts_bs=16, train_bs=64) | ~2 | ~42h |
+| + AMP (Task 6.4) + mcts_bs=32 (Task 6.5) | ~3.5 | ~24h |
+| + grad_accum + train_bs=128 (Task 6.5) | ~4 | ~21h |
+| + torch.compile (Task 6.8) | ~5 | ~17h |
+
+Với session Colab ~12h: có thể train ~2500-3500 episodes mỗi session.
 
 ---
 
@@ -553,6 +758,16 @@ def undo(self, row: int, col: int) -> None:
 3. **Temperature schedule:** Dùng temperature=1.0 cho bao nhiêu nước đầu?
    - Theo chuẩn AlphaZero: 30 nước đầu cho bàn 19x19. Bàn 9x9 -> giảm xuống ~10-15 nước.
 
+4. **AMP + torch.compile compatibility:** Có compatible không? Cần fallback nếu lỗi.
+
+5. **MCTS batch size:** 32 hay 64? 64 nhanh hơn nhưng có thể OOM với 400 sims.
+
+6. **Gradient accumulation steps:** 1 (mặc định) hay 2-4? Effective batch 256 có cần thiết cho 9x9?
+
+7. **Local training priority:** Có nên port `colab_train.py` → `src/scripts/train_rl.py` (Task 6.1) ngay, hay ưu tiên tối ưu Colab trước?
+
+8. **Validation opponent:** Nên dùng random (hiện tại) hay Minimax(d=1) để đánh giá chính xác hơn?
+
 ---
 
 ## Verification Plan
@@ -567,12 +782,21 @@ def undo(self, row: int, col: int) -> None:
 | `test_resnet_forward` | `AlphaZeroNet` forward pass shapes đúng | `tests/test_rl_agent.py` |
 | `test_alphazero_agent_interface` | `AlphaZeroAgent.get_move()` trả về ô hợp lệ | `tests/test_rl_agent.py` |
 
+### Performance Benchmark
+
+| Test | Mô tả |
+|------|-------|
+| Colab throughput | Đo episodes/s trước và sau tối ưu (AMP, batch tuning, compile) |
+| VRAM usage | Kiểm tra T4 16GB không OOM với batch config mới |
+| Save/Load speed | So sánh `np.savez` vs `np.savez_compressed` (Task 6.6) |
+
 ### Manual Verification
 
 1. **Smoke test GPU:** Chạy self-play 2 ván trên Colab -> không crash bộ nhớ
 2. **Training convergence:** Chạy 500 ván -> loss giảm, validation win rate vs random > 80%
 3. **Agent comparison:** `compare.py`: Minimax(d=3) vs AlphaZero(200 sims) x 20 ván -> ghi nhận kết quả
 4. **GUI test:** Đấu thử 1 ván qua GUI -> AI phản hồi < 5 giây, game hoàn thành bình thường
+5. **Resume test:** Kill giữa chừng, chạy lại với `--resume` -> tiếp tục đúng episode count
 
 ---
 
@@ -588,6 +812,14 @@ graph TD
     T4_1 --> T4_2["Task 4.2: Compare Script"]
     T4_1 --> T4_3["Task 4.3: GUI Update"]
 
+    T3_2 --> T6_4["Task 6.4: AMP"]
+    T3_2 --> T6_5["Task 6.5: Batch Tuning"]
+    T3_2 --> T6_8["Task 6.8: torch.compile"]
+    T6_4 --> T6_6["Task 6.6: Save Buffer"]
+    T6_4 --> T6_7["Task 6.7: Validation"]
+    T6_2["Task 6.2: Save Format"] -.-> T6_1["Task 6.1: Local Training"]
+    T6_3["Task 6.3: Train/Eval Mode"] -.-> T6_1
+
     style T1_1 fill:#4a9eff,color:#fff
     style T1_2 fill:#4a9eff,color:#fff
     style T2_1 fill:#ff9f43,color:#fff
@@ -596,6 +828,14 @@ graph TD
     style T4_1 fill:#2ecc71,color:#fff
     style T4_2 fill:#2ecc71,color:#fff
     style T4_3 fill:#2ecc71,color:#fff
+    style T6_1 fill:#9b59b6,color:#fff
+    style T6_2 fill:#9b59b6,color:#fff
+    style T6_3 fill:#9b59b6,color:#fff
+    style T6_4 fill:#e67e22,color:#fff
+    style T6_5 fill:#e67e22,color:#fff
+    style T6_6 fill:#e67e22,color:#fff
+    style T6_7 fill:#e67e22,color:#fff
+    style T6_8 fill:#e67e22,color:#fff
 ```
 
-**Song song được:** Task 1.1 và Task 1.2 (không phụ thuộc nhau).
+**Song song được:** Task 1.1 & 1.2, Task 6.4 & 6.5 & 6.8.
