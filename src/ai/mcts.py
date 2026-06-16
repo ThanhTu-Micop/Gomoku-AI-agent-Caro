@@ -7,6 +7,7 @@ import torch
 
 from src.game.constants import BOARD_SIZE, EMPTY, O, X
 from src.game.rules import is_draw, is_win
+from src.ai.threats import compute_threat_boosts
 
 
 def _other_player(player: int) -> int:
@@ -136,9 +137,9 @@ class MCTS:
 
         if to_predict_states:
             policies, values = self._predict_batch(to_predict_states, to_predict_players)
-            for idx, policy, value in zip(to_predict_indices, policies, values):
-                node = nodes[idx]
-                state = states[idx]
+            for result_idx, policy, value in zip(to_predict_indices, policies, values):
+                node = nodes[result_idx]
+                state = states[result_idx]
                 
                 if not node.is_expanded:
                     valid_mask = (state.flatten() == EMPTY).astype(np.float32)
@@ -149,6 +150,15 @@ class MCTS:
                     else:
                         masked_policy /= total
 
+                    # === Unified threat boost ===
+                    boosts = compute_threat_boosts(state, node.player)
+                    masked_policy *= boosts
+
+                    # Renormalize after boost
+                    total_boosted = float(masked_policy.sum())
+                    if total_boosted > 0:
+                        masked_policy /= total_boosted
+
                     node.is_expanded = True
                     for move_idx in np.where(valid_mask > 0)[0]:
                         r, c = divmod(int(move_idx), BOARD_SIZE)
@@ -158,7 +168,7 @@ class MCTS:
                             prior=float(masked_policy[move_idx]),
                             move_from_parent=(r, c),
                         )
-                results[idx] = value
+                results[result_idx] = value
 
         return results
 

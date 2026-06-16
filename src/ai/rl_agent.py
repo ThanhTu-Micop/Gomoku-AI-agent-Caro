@@ -6,6 +6,7 @@ import torch.optim as optim
 
 from src.ai.base import Agent
 from src.ai.mcts import MCTS
+from src.ai.threats import find_critical_threats, find_open_fours, find_fork_moves
 from src.game.constants import BOARD_SIZE, EMPTY, X, O
 from src.utils.replay_buffer import ReplayBuffer
 
@@ -203,7 +204,11 @@ class RLAgent(Agent):
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        torch.save(self.network.state_dict(), path)
+        torch.save({
+            'network': self.network.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+        }, path)
 
     def load(self, path: str) -> None:
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
@@ -275,7 +280,27 @@ class AlphaZeroAgent(Agent):
             else:
                 move_idx = int(np.random.choice(len(pi), p=pi))
 
-        return move_idx // BOARD_SIZE, move_idx % BOARD_SIZE
+        best_move = (move_idx // BOARD_SIZE, move_idx % BOARD_SIZE)
+
+        # Safety net: if opponent has immediate winning threat and MCTS missed it, force block
+        opponent = O if player == X else X
+        critical = find_critical_threats(grid, opponent)
+        if critical:
+            if best_move not in critical:
+                return critical[0]
+
+        open_fours = find_open_fours(grid, opponent)
+        if open_fours:
+            if best_move not in open_fours:
+                return open_fours[0]
+
+        # Fork check: if opponent can create 2+ threats, must block
+        opponent_forks = find_fork_moves(grid, opponent)
+        if opponent_forks:
+            if best_move not in opponent_forks:
+                return opponent_forks[0]
+
+        return best_move
 
     def record_experience(
         self,
@@ -315,20 +340,29 @@ class AlphaZeroAgent(Agent):
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        torch.save(self.network.state_dict(), path)
+        torch.save({
+            'network': self.network.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+        }, path)
 
     def load(self, path: str) -> None:
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
-       
-        state_dict = checkpoint['network']
+
+        # Support both formats: dict with 'network' key (new) or plain state_dict (legacy)
+        if 'network' in checkpoint:
+            state_dict = checkpoint['network']
+        else:
+            state_dict = checkpoint
+
+        # Strip _orig_mod. prefix from torch.compile
         clean_state_dict = {}
         for key, value in state_dict.items():
             clean_key = key.replace('_orig_mod.', '')
             clean_state_dict[clean_key] = value
- 
+
         self.network.load_state_dict(clean_state_dict)
-        # ------------------------------------
-        
+
         if 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
         if 'scheduler' in checkpoint:

@@ -41,7 +41,7 @@ class ReplayBuffer:
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        np.savez_compressed(
+        np.savez(
             path,
             states=np.array(self.states),
             policies=np.array(self.policies),

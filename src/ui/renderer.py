@@ -200,7 +200,7 @@ def draw_popup_modal(screen: pygame.Surface, title: str, subtitle: str, buttons:
     if subtitle:
         font_sub = pygame.font.SysFont("segoeui", 18)
         sub_surf = font_sub.render(subtitle, True, (127, 140, 141))
-        sub_rect = sub_surf.get_rect(center=(w // 2, panel_y + 105))
+        sub_rect = sub_surf.get_rect(center=(w // 2, panel_y + 85))
         screen.blit(sub_surf, sub_rect)
         
     for btn in buttons:

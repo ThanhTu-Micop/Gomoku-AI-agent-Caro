@@ -36,8 +36,9 @@ def test_double_three_threat() -> None:
     
     # Lưu ý: Cần đảm bảo các đầu là EMPTY (đã mặc định)
     score = evaluate(grid, X)
-    # FOUR_OPEN score is 100000. Double three should be around that.
-    assert score >= 80000, f"Double three score should be very high, got {score}"
+    # With new priority scoring: TWO_OPEN_THREE = 5000, THREE_OPEN = 1000 each
+    # Double three → 2*THREE_OPEN + DOUBLE_OPEN_THREE ≈ 7000-9000
+    assert score >= 6000, f"Double three score should be high, got {score}"
 
 if __name__ == "__main__":
     test_split_four_threat()

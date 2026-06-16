@@ -32,6 +32,7 @@ TRAIN_LOG_FIELDS = [
 def play_self_play_game(
     agent: AlphaZeroAgent,
     exploration_moves: int = 12,
+    mcts_batch: int = 16,
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[float], int | None, list[tuple[int, int, int]]]:
     board = Board()
     states: list[np.ndarray] = []
@@ -44,7 +45,7 @@ def play_self_play_game(
     while True:
         state = encode_board(board.grid, current_player)
         temperature = 1.0 if move_count < exploration_moves else 0.0
-        pi = agent.mcts.search(board.grid.copy(), current_player, temperature=temperature)
+        pi = agent.mcts.search(board.grid.copy(), current_player, temperature=temperature, batch_size=mcts_batch)
 
         valid_mask = (board.grid.flatten() == EMPTY).astype(np.float32)
         pi = pi * valid_mask
@@ -155,6 +156,7 @@ def main() -> None:
     parser.add_argument("--exploration-moves", type=int, default=12, help="Opening moves sampled with temperature=1")
     parser.add_argument("--num-res-blocks", type=int, default=5, help="Number of residual blocks")
     parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
+    parser.add_argument("--mcts-batch", type=int, default=16, help="MCTS batch size per simulation step")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
     args = parser.parse_args()
 
@@ -209,6 +211,7 @@ def main() -> None:
         states, policies, rewards, winner, moves = play_self_play_game(
             agent,
             exploration_moves=args.exploration_moves,
+            mcts_batch=args.mcts_batch,
         )
         agent.record_experience(states, policies, rewards)
         log_game_replay(args.replay_log, episode, moves, winner)
@@ -216,7 +219,7 @@ def main() -> None:
         winner_name = "X" if winner == X else ("O" if winner == O else "Draw")
         win_counts[winner_name] = win_counts.get(winner_name, 0) + 1
 
-        loss = 0.0
+        loss = None
         if len(agent.buffer) >= args.batch_size:
             loss = agent.train_step(batch_size=args.batch_size)
             losses.append(loss)
@@ -224,7 +227,7 @@ def main() -> None:
         writer.writerow(
             {
                 "episode": episode,
-                "loss": f"{loss:.4f}",
+                "loss": f"{loss:.4f}" if loss is not None else "",
                 "buffer_size": len(agent.buffer),
                 "winner": winner_name,
                 "mcts_sims": args.mcts_sims,
@@ -254,8 +257,11 @@ def main() -> None:
                     },
                     f,
                 )
-            win_rate = validate_agent(agent, sims=50)
-            print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
+            if episode % max(500, args.save_every) == 0:
+                win_rate = validate_agent(agent, sims=50)
+                print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
+            else:
+                print(f"  -> Saved checkpoint")
 
     agent.save(args.model_path)
     agent.save_buffer(buffer_path)
