@@ -319,8 +319,20 @@ class AlphaZeroAgent(Agent):
 
     def load(self, path: str) -> None:
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
-        state_dict = checkpoint.get("network", checkpoint)
-        self.network.load_state_dict(state_dict)
+       
+        state_dict = checkpoint['network']
+        clean_state_dict = {}
+        for key, value in state_dict.items():
+            clean_key = key.replace('_orig_mod.', '')
+            clean_state_dict[clean_key] = value
+ 
+        self.network.load_state_dict(clean_state_dict)
+        # ------------------------------------
+        
+        if 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if 'scheduler' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
         self.network.eval()
 
     def save_buffer(self, path: str) -> None:

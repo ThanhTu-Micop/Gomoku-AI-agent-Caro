@@ -30,7 +30,7 @@ BOARD_SIZE: int = 9
 EMPTY: int = 0
 X: int = 1
 O: int = 2
-MAX_EPISODES: int = 5000
+MAX_EPISODES: int = 50000
 
 
 def other_player(player: int) -> int:
