@@ -83,7 +83,7 @@ def plot_win_rate_comparison(rows: list[dict]) -> str:
         d = sum(1 for r in matches if r["winner"] == "Draw")
         total = len(matches)
 
-        short = name[:28]
+        short = name[:45]
         labels.append(short)
         mm_wins.append(m / total * 100)
         az_wins.append(a / total * 100)
