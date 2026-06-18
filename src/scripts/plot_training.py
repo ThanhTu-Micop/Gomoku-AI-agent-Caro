@@ -30,6 +30,8 @@ SCENARIO_COLORS = {
 
 OUTPUT_DIR = "assets"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(os.path.join(OUTPUT_DIR, "sims80"), exist_ok=True)
+os.makedirs(os.path.join(OUTPUT_DIR, "sims120"), exist_ok=True)
 
 
 def load_matches(csv_path: str = MATCH_LOG_FILE) -> list[dict]:
@@ -199,7 +201,8 @@ def plot_scenario_detail(scenario_name: str, matches: list[dict]) -> str:
 
     fig.tight_layout()
     safe_name = scenario_name.replace(" ", "_").replace("(", "").replace(")", "").replace(",", "").replace(".", "")[:60]
-    path = os.path.join(OUTPUT_DIR, f"scenario_{safe_name}.png")
+    subdir = "sims80" if "sims=80" in scenario_name else "sims120" if "sims=120" in scenario_name else "."
+    path = os.path.join(OUTPUT_DIR, subdir, f"scenario_{safe_name}.png")
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved: {path}")

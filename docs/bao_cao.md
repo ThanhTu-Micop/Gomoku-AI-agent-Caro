@@ -610,6 +610,10 @@ Nguyên nhân:
 2. Self-play training nên duy trì exploration lâu hơn
 3. Điểm yếu deterministic là hạn chế cố hữu của policy network thuần (không có noise)
 
+![sims=80 scenario detail](assets/sims80/scenario_Minimaxd=3_vs_AlphaZerosims=80_run_#1.png)
+
+![sims=80 scenario detail (reverse)](assets/sims80/scenario_AlphaZerosims=80_vs_Minimaxd=3_run_#1.png)
+
 ### 11.2 AlphaZero(sims=120) — 50 matches
 
 Kịch bản thứ hai: tăng MCTS simulations từ 80 lên 120 khi inference (model vẫn train với sims=80). Mục đích: kiểm tra khả năng generalization của MCTS — liệu tăng sims có cải thiện chất lượng dù model chưa từng thấy 120 sims lúc train?
@@ -639,7 +643,13 @@ Không giống sims=80, AlphaZero(sims=120) không bị hội tụ deterministic
 - **Số simulations cao hơn → stochasticity tự nhiên trong MCTS cao hơn** — dù chọn `argmax`, cây tìm kiếm sâu hơn tạo ra nhiều nhánh cạnh tranh hơn, giảm khả năng bị exploit pattern cố định
 - Tỉ lệ hòa tăng (10% vs 2% ở sims=80) — AlphaZero phòng thủ tốt hơn, đặc biệt khi đi O (5/25 trận hòa)
 
+![sims=120 scenario detail](assets/sims120/scenario_Minimaxd=3_vs_AlphaZerosims=120_run_#1.png)
+
+![sims=120 scenario detail (reverse)](assets/sims120/scenario_AlphaZerosims=120_vs_Minimaxd=3_run_#1.png)
+
 ### 11.3 So sánh sims=80 vs sims=120
+
+![win rate comparison](assets/win_rate_comparison.png)
 
 | Chỉ số | Minimax(d=3) vs RL Agent | Minimax(d=3) vs AlphaZero(sims=80) | Minimax(d=3) vs AlphaZero(sims=120) |
 |--------|:------------------------:|:----------------------------------:|:-----------------------------------:|
@@ -670,6 +680,8 @@ Tăng số MCTS simulations từ 80 lên 120 khi inference đã cải thiện đ
 ## 12. Kết quả Training RL
 
 ### Checkpoint hiện tại (`models/checkpoint.json`)
+
+![training curves](assets/training_combined.png)
 
 ```json
 {
