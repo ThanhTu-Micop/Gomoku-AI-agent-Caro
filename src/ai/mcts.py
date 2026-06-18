@@ -63,7 +63,7 @@ class MCTS:
         root_state: np.ndarray,
         player: int,
         temperature: float = 1.0,
-        batch_size: int = 16,
+        batch_size: int = 32,
     ) -> np.ndarray:
         root = MCTSNode(player=player)
         self._evaluate_and_expand_batch([root], [root_state])

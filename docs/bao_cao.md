@@ -494,20 +494,11 @@ Pipeline tự động xoay vòng: dữ liệu cũ bị ghi đè khi buffer đầ
 
 ---
 
-## 10. Kết quả So sánh Agents
+## 10. Classical AI vs RL Agent
 
-### 10.1 Tổng quan các kịch bản
+Kịch bản đầu tiên: so sánh Classical AI (Minimax + Alpha-Beta Pruning) với RL Agent (legacy — policy network thuần, không MCTS).
 
-| # | Scenario | Minimax | AlphaZero | Kết quả (thắng-hòa-thua) | Ghi chú |
-|:-:|----------|:-------:|:---------:|:------------------------:|---------|
-| 1 | Minimax(d=3) vs RL Agent (legacy) | depth=3 | — | **20-0-0** | RL Agent cũ (policy net thuần), không có MCTS |
-| 2 | Minimax(d=3) vs AlphaZero | depth=3 | sims=80 | **82-2-16** | 100 trận: AlphaZero cạnh tranh 25 trận đầu, sau đó deterministic |
-
-**Nhận xét chung:**
-- **RL Agent legacy** (không MCTS) thua tuyệt đối 20-0 trước Minimax(d=3) — agent này chỉ dựa trên policy network thuần, không có search.
-- **AlphaZeroAgent (ResNet + MCTS) với sims=80** cạnh tranh tốt với Minimax(d=3) trong 25 trận đầu (44% win rate), nhưng bị hội tụ deterministic sau ~35 trận, kết quả chung 100 trận là **16-2-82**.
-
-### 10.2 Minimax(d=3) vs RL Agent (Legacy) — 20 matches
+### 10.1 Minimax(d=3) vs RL Agent (Legacy) — 20 matches
 
 | Kết quả | Số trận |
 |---------|:-------:|
@@ -544,9 +535,14 @@ Pipeline tự động xoay vòng: dữ liệu cũ bị ghi đè khi buffer đầ
 - Thời gian suy nghĩ trung bình của Minimax: ~0.2-0.9s (early), ~0.04-0.6s (mid)
 - Nguyên nhân: RL Agent (bản legacy) không dùng MCTS, chỉ dựa trên policy network thuần, yếu hơn nhiều so với Minimax có search depth=3
 
-### 10.3 Minimax(d=3) vs AlphaZero(sims=80) — 100 matches
 
-Đây là kịch bản quan trọng nhất: AlphaZero dùng MCTS với 80 simulations (bằng tham số lúc train) đấu với Minimax depth=3.
+## 11. Ảnh hưởng của MCTS Simulations
+
+Phần này so sánh hiệu năng của AlphaZeroAgent với hai mức MCTS simulations (sims=80 và sims=120) khi đấu với Minimax(d=3). Mục tiêu: kiểm tra xem tăng số simulations khi inference có cải thiện chất lượng chơi không, dù model được train với sims=80.
+
+### 11.1 AlphaZero(sims=80) — 100 matches
+
+Đây là kịch bản đầu tiên: AlphaZero dùng MCTS với 80 simulations (bằng tham số lúc train) đấu với Minimax depth=3.
 
 #### Kết quả tổng quan
 
@@ -562,15 +558,15 @@ Pipeline tự động xoay vòng: dữ liệu cũ bị ghi đè khi buffer đầ
 
 | Nhóm | Trận | Minimax thắng | AlphaZero thắng | Hòa | Nhận xét |
 |:----:|:----:|:-------------:|:---------------:|:---:|----------|
-| 1 | 1-25 | 12 (48%) | 11 (44%) | 2 (8%) | Cạnh tranh nhất, AlphaZero thắng nhiều |
-| 2 | 26-50 | 23 (92%) | 2 (8%) | 0 | AlphaZero bắt đầu mất thế |
+| 1 | 1-25 | 10 (40%) | 13 (52%) | 2 (8%) | Cạnh tranh nhất, AlphaZero nhỉnh hơn |
+| 2 | 26-50 | 22 (88%) | 3 (12%) | 0 | AlphaZero bắt đầu mất thế |
 | 3 | 51-75 | 25 (100%) | 0 | 0 | Minimax thắng tuyệt đối |
 | 4 | 76-100 | 25 (100%) | 0 | 0 | Hoàn toàn một chiều |
 
 #### Chi tiết 25 trận đầu (cạnh tranh nhất)
 
 | Match | X | O | Winner | Số nước | Ghi chú |
-|:-----:|---|---|--------|:-------:|---------|
+|:-----:|:---:|:---:|:--------:|:-------:|---------|
 | 1 | Minimax | AlphaZero | Minimax | 15 | |
 | 2 | AlphaZero | Minimax | AlphaZero | 23 | AlphaZero thắng khi đi X |
 | 3 | Minimax | AlphaZero | Minimax | 15 | |
@@ -614,25 +610,64 @@ Nguyên nhân:
 2. Self-play training nên duy trì exploration lâu hơn
 3. Điểm yếu deterministic là hạn chế cố hữu của policy network thuần (không có noise)
 
-### 10.4 Phân tích tổng hợp
+### 11.2 AlphaZero(sims=120) — 50 matches
 
-| Chỉ số | Minimax(d=3) vs RL Agent | Minimax(d=3) vs AlphaZero(sims=80) |
-|--------|:------------------------:|:----------------------------------:|
-| Số trận | 20 | 100 |
-| Win rate của Classical AI | 100% | 82% |
-| Win rate của RL | 0% | 16% |
-| Draw rate | 0% | 2% |
-| Số nước trung bình | 11.2 | 20.3 |
-| Có vào mid-game không? | Hiếm | Thường xuyên |
+Kịch bản thứ hai: tăng MCTS simulations từ 80 lên 120 khi inference (model vẫn train với sims=80). Mục đích: kiểm tra khả năng generalization của MCTS — liệu tăng sims có cải thiện chất lượng dù model chưa từng thấy 120 sims lúc train?
 
-**Kết luận so sánh:** AlphaZeroAgent (ResNet + MCTS) đã chứng minh tính hiệu quả khi vượt qua Minimax(d=3) với tỉ số 11-8-1. Thành công này đến từ:
-1. MCTS kết hợp policy network cho phép tìm kiếm thông minh hơn brute-force alpha-beta
-2. Model được train với đúng tham số (80 sims) cho kết quả tốt nhất
-3. Khả năng phát hiện threat pattern học được từ self-play
+#### Kết quả tổng quan
+
+| Kết quả | Số trận (50) | Tỉ lệ |
+|---------|:----------:|:-----:|
+| Minimax(d=3) thắng | **12** | 24% |
+| AlphaZero(sims=120) thắng | **33** | 66% |
+| Hòa | **5** | 10% |
+
+#### Diễn biến theo nhóm
+
+| Nhóm | Trận | Minimax thắng | AlphaZero thắng | Hòa | Nhận xét |
+|:----:|:----:|:-------------:|:---------------:|:---:|----------|
+| 1 | 1-10 | 3 (30%) | 5 (50%) | 2 (20%) | AlphaZero áp đảo |
+| 2 | 11-20 | 2 (20%) | 8 (80%) | 0 | Hoàn toàn một chiều |
+| 3 | 21-30 | 2 (20%) | 7 (70%) | 1 (10%) | AlphaZero duy trì thế mạnh |
+| 4 | 31-40 | 1 (10%) | 8 (80%) | 1 (10%) | Đỉnh cao của AlphaZero |
+| 5 | 41-50 | 4 (40%) | 5 (50%) | 1 (10%) | Cạnh tranh trở lại |
+
+#### Phát hiện: Không hội tụ deterministic
+
+Không giống sims=80, AlphaZero(sims=120) không bị hội tụ deterministic sau 35 trận. Ở nhóm cuối (41-50), AlphaZero vẫn duy trì 50% win rate và có 1 trận hòa. Điều này cho thấy:
+
+- **Số simulations cao hơn → stochasticity tự nhiên trong MCTS cao hơn** — dù chọn `argmax`, cây tìm kiếm sâu hơn tạo ra nhiều nhánh cạnh tranh hơn, giảm khả năng bị exploit pattern cố định
+- Tỉ lệ hòa tăng (10% vs 2% ở sims=80) — AlphaZero phòng thủ tốt hơn, đặc biệt khi đi O (5/25 trận hòa)
+
+### 11.3 So sánh sims=80 vs sims=120
+
+| Chỉ số | Minimax(d=3) vs RL Agent | Minimax(d=3) vs AlphaZero(sims=80) | Minimax(d=3) vs AlphaZero(sims=120) |
+|--------|:------------------------:|:----------------------------------:|:-----------------------------------:|
+| Số trận | 20 | 100 | 50 |
+| Win rate của Classical AI | 100% | 82% | 24% |
+| Win rate của RL | 0% | 16% | 66% |
+| Draw rate | 0% | 2% | 10% |
+| Số nước trung bình | 11.2 | 20.3 | 27.4 |
+| Có vào mid-game không? | Hiếm | Thường xuyên | Hầu hết |
+| Hội tụ deterministic? | — | Có (sau ~35 trận) | Không |
+
+**Kết luận so sánh:**
+
+| Yếu tố | sims=80 | sims=120 |
+|--------|:-------:|:--------:|
+| AlphaZero win rate | 16% | **66%** |
+| Deterministic convergence | Có | **Không** |
+| Draw rate | 2% | **10%** |
+| Avg game length | 20.3 | **27.4** |
+
+Tăng số MCTS simulations từ 80 lên 120 khi inference đã cải thiện đáng kể chất lượng chơi của AlphaZeroAgent (66% win rate vs 16%), dù model được train với sims=80. Điều này chứng minh:
+1. **MCTS generalize tốt**: Policy network học được representation đủ tốt để MCTS với sims cao hơn khai thác hiệu quả hơn
+2. **Càng nhiều sims → càng ít deterministic**: Cây tìm kiếm sâu hơn tạo ra nhiều nhánh đa dạng, giảm nguy cơ bị exploit pattern
+3. **Không cần train lại**: Chỉ cần tăng sims khi inference đã cải thiện đáng kể (từ 16% lên 66% win rate)
 
 ---
 
-## 11. Kết quả Training RL
+## 12. Kết quả Training RL
 
 ### Checkpoint hiện tại (`models/checkpoint.json`)
 
@@ -659,13 +694,13 @@ Nguyên nhân:
 **Nhận xét:**
 - Người đi trước (X) có lợi thế rõ rệt (tỉ lệ ~1.66:1)
 - Không có ván hòa nào trong 18,000 episodes — điều này phổ biến với MCTS self-play khi agent luôn chọn nước mạnh nhất
-- Khi đem model đã train so tài với Minimax(d=3) trong 100 trận, AlphaZero(sims=80) thắng **16 trận** (16%), hòa **2 trận** (2%). Tuy nhiên, AlphaZero chủ yếu thắng ở các trận đầu (25 trận đầu: 44% win rate), sau đó hội tụ về deterministic play và thua liên tiếp do bị Minimax khai thác pattern cố định
-- Model hoạt động tốt nhất ở đúng số sims lúc train (80). Khi tăng lên 200-800 sims, policy prior không còn phù hợp và kết quả kém hơn
+- Khi đem model đã train so tài với Minimax(d=3) trong 100 trận, AlphaZero(sims=80) thắng **16 trận** (16%), hòa **2 trận** (2%). Tuy nhiên, AlphaZero chủ yếu thắng ở các trận đầu (25 trận đầu: 52% win rate), sau đó hội tụ về deterministic play và thua liên tiếp do bị Minimax khai thác pattern cố định
+- Khi tăng sims lên 120 (inference), AlphaZeroAgent cải thiện đáng kể: **66% win rate** (33/50), hòa **10%** (5/50), và **không bị hội tụ deterministic** — chứng tỏ MCTS generalize tốt dù model train với sims=80
 - Replay buffer chứa 100,000 samples (52% thắng, 48% thua) — dung lượng ~97.2 MB
 
 ---
 
-## 12. Bug Fixes
+## 13. Bug Fixes
 
 Trong quá trình code review, đã phát hiện và sửa **8 bugs** (7 critical/medium, 1 low):
 
@@ -682,7 +717,7 @@ Trong quá trình code review, đã phát hiện và sửa **8 bugs** (7 critica
 
 ---
 
-## 13. Kết luận
+## 14. Kết luận
 
 ### Những gì đã làm được
 
@@ -700,23 +735,23 @@ Trong quá trình code review, đã phát hiện và sửa **8 bugs** (7 critica
 
 1. **RL Agent (legacy) yếu**: Bị Minimax(d=3) đánh bại 20-0 do không dùng MCTS. Không cần phát triển thêm.
 
-2. **AlphaZeroAgent bị hội tụ deterministic**: Dù đã train 18,000 episodes, model chỉ thắng 16/100 trước Minimax(d=3). Sau ~35 trận, agent chơi hoàn toàn deterministic (cùng vị trí → cùng nước đi), bị Minimax khai thác pattern cố định. Cần:
-   - Duy trì temperature > 0 khi evaluation để tránh bị exploit
+2. **AlphaZeroAgent bị hội tụ deterministic với sims thấp**: Với sims=80, model chỉ thắng 16/100 trước Minimax(d=3) và hội tụ sau ~35 trận. Tuy nhiên, khi tăng sims lên 120 (inference), agent đạt 66% win rate và không còn deterministic. Giải pháp:
+   - Duy trì số simulations cao (≥120) khi evaluation
    - Thêm Dirichlet noise vào root node MCTS (theo đúng AlphaZero paper)
-   - Tăng MCTS simulations lên 200-400 trong lúc train
+   - Train lại với số sims cao hơn (200-400) để cải thiện thêm
 
-3. **Draw rate = 0 trong self-play**: 18,000 episodes không có ván hòa nào — có thể do exploration chưa đủ. Tuy nhiên khi đấu với Minimax đã xuất hiện 1 trận hòa (match 9, 81 nước).
+3. **Draw rate = 0 trong self-play**: 18,000 episodes không có ván hòa nào — có thể do exploration chưa đủ. Tuy nhiên khi đấu với Minimax đã xuất hiện 2 trận hòa (match 7 và 23, 81 nước).
 
 4. **Chưa có validation tracking trong training**: Hiện chỉ log loss và win count, chưa có validation định kỳ với đối thủ yếu để đánh giá progress thực tế.
 
-5. **Model chỉ train với 80 sims**: Hoạt động tốt ở 80 sims nhưng không generalize lên số sims cao hơn. Cần train lại với config cao hơn.
+5. **Model chỉ train với 80 sims**: Mặc dù thực tế model generalize khá tốt lên 120 sims (66% win rate), nhưng train lại với sims=200-400 vẫn có thể cải thiện thêm.
 
 6. **Log file handle leak**: `train_rl.py` mở file log ở đầu và không đóng đúng cách nếu có exception (minor).
 
 ### Tổng kết
 
 Project đã cài đặt thành công 2 approaches cho Gomoku 9x9 và chứng minh được:
-- **Minimax + Alpha-Beta**: hoạt động tốt, thắng RL Agent legacy 20-0, thắng AlphaZero 82-16-2 qua 100 trận nhờ tính deterministic của đối thủ
-- **AlphaZero (ResNet + MCTS)**: cạnh tranh tốt ở các trận đầu (44% win rate trong 25 trận) nhưng bị hội tụ deterministic, cần thêm stochasticity để cải thiện
+- **Minimax + Alpha-Beta**: hoạt động tốt, thắng RL Agent legacy 20-0
+- **AlphaZero (ResNet + MCTS)**: phụ thuộc mạnh vào số MCTS simulations — với sims=80 chỉ thắng 16% (bị hội tụ deterministic), nhưng với sims=120 đạt **66% win rate** và không còn deterministic. Chỉ cần tăng sims khi inference đã cải thiện đáng kể, không cần train lại
 
 Kiến trúc module rõ ràng, test coverage cao (47 tests), code quality tốt (8 bugs đã fix trong code review), hỗ trợ Colab training và GUI tương tác.

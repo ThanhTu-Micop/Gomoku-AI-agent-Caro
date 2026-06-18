@@ -19,6 +19,7 @@ SCENARIO_COLORS = {
     "Minimax(d=3)": "#2196F3",
     "AlphaZero(sims=80)": "#FF5722",
     "Minimax(d=2)": "#4CAF50",
+    "AlphaZero(sims=120)": "#9C27B0",
     "AlphaZero(sims=200)": "#9C27B0",
     "AlphaZero(sims=800)": "#FF9800",
     "Minimax(d=1)": "#00BCD4",
@@ -56,19 +57,31 @@ def group_by_scenario(rows: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def plot_win_rate_comparison(scenario_groups: dict[str, list[dict]]) -> str:
+def plot_win_rate_comparison(rows: list[dict]) -> str:
+    combined: dict[str, list[dict]] = defaultdict(list)
+    keys = set()
+    for r in rows:
+        agents = sorted([r["ai1"], r["ai2"]])
+        if "AlphaZero" in agents[0] or "AlphaZero" in agents[1]:
+            key = [a for a in agents if "Minimax" in a][0] + " vs " + [a for a in agents if "AlphaZero" in a or "RL Agent" in a][0]
+        else:
+            key = " vs ".join(agents)
+        keys.add(key)
+        combined[key].append(r)
+
     labels = []
     mm_wins = []
     az_wins = []
     draws = []
 
-    for name, matches in scenario_groups.items():
+    for name in sorted(keys):
+        matches = combined[name]
         m = sum(1 for r in matches if "Minimax" in r["winner"] and "Draw" not in r["winner"])
         a = sum(1 for r in matches if "AlphaZero" in r["winner"] or "RL Agent" in r["winner"])
         d = sum(1 for r in matches if r["winner"] == "Draw")
         total = len(matches)
 
-        short = name.split(" vs ")[0][:20] if "Minimax" in name.split(" vs ")[0] else name.split(" vs ")[1][:20]
+        short = name[:28]
         labels.append(short)
         mm_wins.append(m / total * 100)
         az_wins.append(a / total * 100)
@@ -77,7 +90,7 @@ def plot_win_rate_comparison(scenario_groups: dict[str, list[dict]]) -> str:
     x = np.arange(len(labels))
     width = 0.25
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(8, 5))
     ax.bar(x - width, mm_wins, width, label="Minimax wins", color="#2196F3")
     ax.bar(x, az_wins, width, label="AlphaZero/RL wins", color="#FF5722")
     ax.bar(x + width, draws, width, label="Draws", color="#9E9E9E")
@@ -85,17 +98,17 @@ def plot_win_rate_comparison(scenario_groups: dict[str, list[dict]]) -> str:
     ax.set_ylabel("Win rate (%)")
     ax.set_title("Win Rate Comparison by Scenario")
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
-    ax.legend()
-    ax.set_ylim(0, 110)
+    ax.set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    ax.legend(fontsize=8)
+    ax.set_ylim(0, 115)
 
     for i in range(len(labels)):
         if mm_wins[i] > 0:
-            ax.text(i - width, mm_wins[i] + 1, f"{mm_wins[i]:.0f}%", ha="center", va="bottom", fontsize=7)
+            ax.text(i - width, mm_wins[i] + 1.5, f"{mm_wins[i]:.0f}%", ha="center", va="bottom", fontsize=8)
         if az_wins[i] > 0:
-            ax.text(i, az_wins[i] + 1, f"{az_wins[i]:.0f}%", ha="center", va="bottom", fontsize=7)
+            ax.text(i, az_wins[i] + 1.5, f"{az_wins[i]:.0f}%", ha="center", va="bottom", fontsize=8)
         if draws[i] > 0:
-            ax.text(i + width, draws[i] + 1, f"{draws[i]:.0f}%", ha="center", va="bottom", fontsize=7)
+            ax.text(i + width, draws[i] + 1.5, f"{draws[i]:.0f}%", ha="center", va="bottom", fontsize=8)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, "win_rate_comparison.png")
@@ -218,11 +231,11 @@ def main() -> None:
         for name in target:
             plot_scenario_detail(name, scenario_groups[name])
     else:
-        plot_win_rate_comparison(scenario_groups)
+        plot_win_rate_comparison(rows)
         plot_move_count_distribution(rows)
         plot_thinking_time(rows)
         for name, matches in scenario_groups.items():
-            if "Minimax(d=3) vs AlphaZero(sims=80)" in name:
+            if "Minimax(d=3)" in name or "AlphaZero(sims=80)" in name:
                 plot_scenario_detail(name, matches)
 
     print(f"\nAll charts saved to {OUTPUT_DIR}/")
