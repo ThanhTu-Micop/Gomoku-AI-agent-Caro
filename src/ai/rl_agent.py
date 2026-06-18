@@ -175,9 +175,9 @@ class RLAgent(Agent):
     ) -> None:
         self.buffer.extend(states, policies, rewards)
 
-    def train_step(self, batch_size: int = 64) -> float:
+    def train_step(self, batch_size: int = 64) -> dict[str, float]:
         if len(self.buffer) < batch_size:
-            return 0.0
+            return {"total": 0.0, "policy": 0.0, "value": 0.0}
 
         states, policies, rewards = self.buffer.sample(batch_size)
         state_tensors = torch.tensor(states, dtype=torch.float32).to(self.device)
@@ -197,7 +197,7 @@ class RLAgent(Agent):
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
-        return loss.item()
+        return {"total": loss.item(), "policy": policy_loss.item(), "value": value_loss.item()}
 
     def get_lr(self) -> float:
         return self.optimizer.param_groups[0]["lr"]
@@ -310,9 +310,9 @@ class AlphaZeroAgent(Agent):
     ) -> None:
         self.buffer.extend(states, policies, rewards)
 
-    def train_step(self, batch_size: int = 64) -> float:
+    def train_step(self, batch_size: int = 64) -> dict[str, float]:
         if len(self.buffer) < batch_size:
-            return 0.0
+            return {"total": 0.0, "policy": 0.0, "value": 0.0}
 
         states, policies, rewards = self.buffer.sample(batch_size)
         state_tensors = torch.tensor(states, dtype=torch.float32).to(self.device)
@@ -333,7 +333,7 @@ class AlphaZeroAgent(Agent):
         self.optimizer.step()
         self.scheduler.step()
         self.network.eval()
-        return loss.item()
+        return {"total": loss.item(), "policy": policy_loss.item(), "value": value_loss.item()}
 
     def get_lr(self) -> float:
         return self.optimizer.param_groups[0]["lr"]

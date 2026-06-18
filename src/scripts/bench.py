@@ -1,7 +1,7 @@
 """Quick benchmark: test multiple sims/depth combos for RL:Minimax ratio."""
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.game.board import Board
 from src.game.rules import is_win, is_draw

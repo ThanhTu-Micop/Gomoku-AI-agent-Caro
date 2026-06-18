@@ -22,6 +22,10 @@ TRAIN_LOG_FILE = os.path.join("logs", "training.csv")
 TRAIN_LOG_FIELDS = [
     "episode",
     "loss",
+    "policy_loss",
+    "value_loss",
+    "lr",
+    "val_win_rate",
     "buffer_size",
     "winner",
     "mcts_sims",
@@ -219,15 +223,24 @@ def main() -> None:
         winner_name = "X" if winner == X else ("O" if winner == O else "Draw")
         win_counts[winner_name] = win_counts.get(winner_name, 0) + 1
 
-        loss = None
+        loss_dict = None
         if len(agent.buffer) >= args.batch_size:
-            loss = agent.train_step(batch_size=args.batch_size)
-            losses.append(loss)
+            loss_dict = agent.train_step(batch_size=args.batch_size)
+            if loss_dict["total"] > 0:
+                losses.append(loss_dict["total"])
+
+        val_rate = ""
+        if episode % max(500, args.save_every) == 0:
+            val_rate = f"{validate_agent(agent, sims=50) * 100:.0f}%"
 
         writer.writerow(
             {
                 "episode": episode,
-                "loss": f"{loss:.4f}" if loss is not None else "",
+                "loss": f"{loss_dict['total']:.4f}" if loss_dict and loss_dict["total"] > 0 else "",
+                "policy_loss": f"{loss_dict['policy']:.4f}" if loss_dict and loss_dict["policy"] > 0 else "",
+                "value_loss": f"{loss_dict['value']:.4f}" if loss_dict and loss_dict["value"] > 0 else "",
+                "lr": f"{agent.get_lr():.6f}",
+                "val_win_rate": val_rate,
                 "buffer_size": len(agent.buffer),
                 "winner": winner_name,
                 "mcts_sims": args.mcts_sims,
@@ -257,11 +270,7 @@ def main() -> None:
                     },
                     f,
                 )
-            if episode % max(500, args.save_every) == 0:
-                win_rate = validate_agent(agent, sims=50)
-                print(f"  -> Saved checkpoint | Validation vs random: {win_rate * 100:.0f}%")
-            else:
-                print(f"  -> Saved checkpoint")
+            print(f"  -> Saved checkpoint")
 
     agent.save(args.model_path)
     agent.save_buffer(buffer_path)
