@@ -88,6 +88,7 @@ def play_match(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare Minimax vs RL agent")
     parser.add_argument("--matches", type=int, default=10, help="Number of matches to play")
+    parser.add_argument("--start-id", type=int, default=0, help="Match ID offset")
     parser.add_argument("--depth", type=int, default=3, help="Minimax search depth")
     parser.add_argument(
         "--agent-type",
@@ -133,9 +134,9 @@ def main() -> None:
 
     for i in range(args.matches):
         if i % 2 == 0:
-            play_match(ai1, ai2, ai1_name, ai2_name, i + 1, log_replay=args.log_replay)
+            play_match(ai1, ai2, ai1_name, ai2_name, args.start_id + i + 1, log_replay=args.log_replay)
         else:
-            play_match(ai2, ai1, ai2_name, ai1_name, i + 1, log_replay=args.log_replay)
+            play_match(ai2, ai1, ai2_name, ai1_name, args.start_id + i + 1, log_replay=args.log_replay)
 
     print("Comparison complete. Results saved to logs/matches.csv")
 
