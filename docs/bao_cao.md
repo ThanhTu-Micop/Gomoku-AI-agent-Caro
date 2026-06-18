@@ -501,17 +501,11 @@ Pipeline tự động xoay vòng: dữ liệu cũ bị ghi đè khi buffer đầ
 | # | Scenario | Minimax | AlphaZero | Kết quả (thắng-hòa-thua) | Ghi chú |
 |:-:|----------|:-------:|:---------:|:------------------------:|---------|
 | 1 | Minimax(d=3) vs RL Agent (legacy) | depth=3 | — | **20-0-0** | RL Agent cũ (policy net thuần), không có MCTS |
-| 2 | Minimax(d=3) vs AlphaZero | depth=3 | sims=200 | **20-0-0** | AlphaZero dùng sims=200 (không khớp với training) |
-| 3 | Minimax(d=3) vs AlphaZero | depth=3 | **sims=80** | **82-2-16** | 100 trận: AlphaZero cạnh tranh 25 trận đầu, sau đó deterministic |
-| 4 | Minimax(d=2) vs AlphaZero | depth=2 | sims=800 | **20-0-0** | Minh họa sức mạnh Minimax với độ sâu thấp nhất |
-| 5 | Minimax(d=0) vs AlphaZero | depth=0 | sims=800 | **0-0-20** | Minimax depth=0 chỉ là heuristic thuần túy |
-| 6 | Minimax(d=1) vs AlphaZero | depth=1 | sims=800 | **20-0-0** | Chỉ cần minimax depth=1 là đã thắng tuyệt đối |
+| 2 | Minimax(d=3) vs AlphaZero | depth=3 | sims=80 | **82-2-16** | 100 trận: AlphaZero cạnh tranh 25 trận đầu, sau đó deterministic |
 
 **Nhận xét chung:**
 - **RL Agent legacy** (không MCTS) thua tuyệt đối 20-0 trước Minimax(d=3) — agent này chỉ dựa trên policy network thuần, không có search.
 - **AlphaZeroAgent (ResNet + MCTS) với sims=80** cạnh tranh tốt với Minimax(d=3) trong 25 trận đầu (44% win rate), nhưng bị hội tụ deterministic sau ~35 trận, kết quả chung 100 trận là **16-2-82**.
-- Khi tăng MCTS simulations lên 200 hoặc 800, AlphaZero lại thua nhiều hơn — do model được train với sims=80 nên policy prior không còn phù hợp với số sims cao hơn.
-- Minimax depth=0 (chỉ heuristic evaluation) thua AlphaZero 0-20, xác nhận heuristic đơn thuần không đủ mạnh.
 
 ### 10.2 Minimax(d=3) vs RL Agent (Legacy) — 20 matches
 
