@@ -39,6 +39,104 @@ def other_player(player: int) -> int:
 
 
 # ============================================================
+# Threat Detection (safety nets for inference)
+# ============================================================
+
+DIRECTIONS: list[tuple[int, int]] = [(0, 1), (1, 0), (1, 1), (1, -1)]
+
+
+def _extract_line(
+    grid: np.ndarray, r: int, c: int, dr: int, dc: int, length: int
+) -> list[tuple[int, int, int]]:
+    cells: list[tuple[int, int, int]] = []
+    for k in range(length):
+        nr, nc = r + dr * k, c + dc * k
+        if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE:
+            cells.append((int(grid[nr, nc]), nr, nc))
+        else:
+            break
+    return cells
+
+
+def _line_to_str(cells: list[tuple[int, int, int]], player: int) -> str:
+    opp = other_player(player)
+    lut = {EMPTY: "0", player: "1", opp: "2"}
+    return "".join(lut[v] for v, _, _ in cells)
+
+
+def find_critical_threats(
+    grid: np.ndarray, opponent: int
+) -> list[tuple[int, int]]:
+    threats: set[tuple[int, int]] = set()
+    for dr, dc in DIRECTIONS:
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                cells = _extract_line(grid, r, c, dr, dc, 5)
+                if len(cells) < 5:
+                    continue
+                vals = [v for v, _, _ in cells]
+                if vals.count(opponent) == 4 and vals.count(EMPTY) == 1:
+                    for v, nr, nc in cells:
+                        if v == EMPTY:
+                            threats.add((nr, nc))
+    return list(threats)
+
+
+def find_open_fours(grid: np.ndarray, player: int) -> list[tuple[int, int]]:
+    threats: dict[tuple[int, int], int] = {}
+
+    for dr, dc in DIRECTIONS:
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                cells = _extract_line(grid, r, c, dr, dc, 7)
+                if len(cells) < 5:
+                    continue
+                line = _line_to_str(cells, player)
+
+                for win_len in (5, 6, 7):
+                    for i in range(len(line) - win_len + 1):
+                        window = line[i : i + win_len]
+
+                        # P6: _XXXX_ (7-cell window, both ends open)
+                        if win_len >= 7 and window[:6] == "011110":
+                            for v, nr, nc in [cells[i], cells[i + 6]]:
+                                if v == EMPTY:
+                                    threats[(nr, nc)] = max(threats.get((nr, nc), 0), 10)
+
+                        # P7: _XXXX (left open)
+                        if window[:5] == "01111" and (len(window) < 6 or window[5] != "0"):
+                            if window[0] == "0":
+                                pos = (cells[i][1], cells[i][2])
+                                if grid[pos[0], pos[1]] == EMPTY:
+                                    threats[pos] = max(threats.get(pos, 0), 8)
+
+                        # P8: XXXX_ (right open)
+                        if window[-5:] == "11110" and (i == 0 or window[0] != "0"):
+                            if window[-1] == "0":
+                                pos = (cells[i + win_len - 1][1], cells[i + win_len - 1][2])
+                                if grid[pos[0], pos[1]] == EMPTY:
+                                    threats[pos] = max(threats.get(pos, 0), 8)
+
+                        # P9: _XXX_X (split four with gap)
+                        if window == "011101" or window == "111010":
+                            for k in range(win_len):
+                                if window[k] == "0":
+                                    pos = (cells[i + k][1], cells[i + k][2])
+                                    if grid[pos[0], pos[1]] == EMPTY:
+                                        threats[pos] = max(threats.get(pos, 0), 9)
+
+                        # P10: X_XXX_ (split four with gap)
+                        if window == "101110":
+                            for k in range(win_len):
+                                if window[k] == "0":
+                                    pos = (cells[i + k][1], cells[i + k][2])
+                                    if grid[pos[0], pos[1]] == EMPTY:
+                                        threats[pos] = max(threats.get(pos, 0), 9)
+
+    return [m for m, _ in sorted(threats.items(), key=lambda x: x[1], reverse=True)]
+
+
+# ============================================================
 # Board + Rules
 # ============================================================
 class Board:
@@ -293,7 +391,7 @@ class MCTS:
         root = MCTSNode(player=player)
         self._evaluate_and_expand_batch([root], [root_state])
 
-                num_batches = max(1, math.ceil(self.num_simulations / batch_size))
+        num_batches = max(1, math.ceil(self.num_simulations / batch_size))
         
         with torch.inference_mode():
             for _ in range(num_batches):
@@ -487,6 +585,47 @@ class AlphaZeroAgent:
     def set_num_simulations(self, num_simulations: int) -> None:
         self.mcts.num_simulations = num_simulations
 
+    def get_move(
+        self, grid: np.ndarray, player: int, deterministic: bool = True
+    ) -> tuple[int, int]:
+        temperature = 0.0 if deterministic else 1.0
+        pi = self.mcts.search(grid.copy(), player, temperature=temperature)
+
+        valid_mask = (grid.flatten() == EMPTY).astype(np.float32)
+        pi = pi * valid_mask
+        total = float(pi.sum())
+        if total <= 0:
+            valid = np.where(valid_mask > 0)[0]
+            if len(valid) == 0:
+                return BOARD_SIZE // 2, BOARD_SIZE // 2
+            move_idx = int(valid[0])
+        else:
+            pi = pi / total
+            move_idx = int(np.argmax(pi)) if deterministic else int(np.random.choice(len(pi), p=pi))
+
+        best_move = (move_idx // BOARD_SIZE, move_idx % BOARD_SIZE)
+
+        # Offensive safety net: must play winning move
+        our_critical = find_critical_threats(grid, player)
+        if our_critical and best_move not in our_critical:
+            return our_critical[0]
+
+        our_open_fours = find_open_fours(grid, player)
+        if our_open_fours and best_move not in our_open_fours:
+            return our_open_fours[0]
+
+        # Defensive safety net: must block opponent's immediate win
+        opponent = other_player(player)
+        opp_critical = find_critical_threats(grid, opponent)
+        if opp_critical and best_move not in opp_critical:
+            return opp_critical[0]
+
+        opp_open_fours = find_open_fours(grid, opponent)
+        if opp_open_fours and best_move not in opp_open_fours:
+            return opp_open_fours[0]
+
+        return best_move
+
     def train_step(self, batch_size: int = 64) -> float:
         if len(self.buffer) < batch_size:
             return 0.0
@@ -657,9 +796,7 @@ def validate_agent(agent: AlphaZeroAgent, num_matches: int = 10, sims: int = 50)
             current_player = X
             while True:
                 if current_player == X:
-                    pi = agent.mcts.search(board.grid.copy(), current_player, temperature=0.0)
-                    move_idx = int(np.argmax(pi))
-                    move = divmod(move_idx, BOARD_SIZE)
+                    move = agent.get_move(board.grid.copy(), current_player, deterministic=True)
                 else:
                     valid = board.get_valid_moves()
                     if not valid:
@@ -701,6 +838,7 @@ def main() -> None:
     parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
     parser.add_argument("--mcts-batch", type=int, default=32, help="MCTS batch size per simulation step")
     parser.add_argument("--grad-accum", type=int, default=1, help="Gradient accumulation steps (effective batch = batch_size * grad_accum)")
+    parser.add_argument("--mount-drive", action="store_true", help="Mount Google Drive, save model/logs to MyDrive/gomoku/")
     args = parser.parse_args()
 
     if args.episodes > MAX_EPISODES:
@@ -711,7 +849,19 @@ def main() -> None:
     if device == "cpu":
         torch.set_num_threads(1)
         print("CPU mode: torch.num_threads set to 1")
-    
+
+    if args.mount_drive:
+        try:
+            from google.colab import drive
+            drive.mount("/content/drive")
+        except ImportError:
+            print("Warning: not running on Colab, --mount-drive ignored")
+        else:
+            DRIVE_BASE = "/content/drive/MyDrive/gomoku"
+            os.makedirs(f"{DRIVE_BASE}/models", exist_ok=True)
+            os.makedirs(f"{DRIVE_BASE}/logs", exist_ok=True)
+            args.model_path = f"{DRIVE_BASE}/models/rl_agent.pth"
+
     model_path = args.model_path
     meta_path = os.path.join(os.path.dirname(model_path) or ".", "checkpoint.json")
     buffer_path = model_path.replace(".pth", "_buffer.npz")

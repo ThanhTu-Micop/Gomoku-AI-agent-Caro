@@ -102,14 +102,21 @@ src/
 !pip install numpy pandas torch --quiet
 ```
 
-**Cell 2 — Chay lan dau:**
+**Cell 2 — Cai thu vien:**
 ```python
-%run /content/colab_train.py --episodes 2000 --save-every 200
+!pip install numpy pandas torch --quiet
 ```
 
-**Cell 3 — Resume (upload `models/` tu session truoc):**
+**Cell 3 — Ket noi Google Drive (tu dong luu model vao Drive):**
 ```python
-%run /content/colab_train.py --episodes 2000 --save-every 200 --resume
+%run /content/colab_train.py --episodes 2000 --save-every 200 --mount-drive
+```
+Sau khi chay, se co popup yeu cau auth Google Drive. Lam theo de mount.
+Khi session timeout, model da san trong **MyDrive/gomoku/**.
+
+**Cell 4 — Resume (tu dong doc tu Drive, khong can upload gi):**
+```python
+%run /content/colab_train.py --episodes 2000 --save-every 200 --mount-drive --resume
 ```
 
 ### D. Tham so CLI
@@ -117,13 +124,12 @@ src/
 | Flag | Mac dinh | Mo ta |
 |---|---|---|
 | `--episodes` | 1000 | Tong so van self-play moi lan chay |
-| `--batch-size` | 64 | So sample moi lan train |
+| `--batch-size` | 128 | So sample moi lan train |
 | `--buffer-size` | 100_000 | Kich thuoc replay buffer |
 | `--save-every` | 100 | Luu checkpoint sau moi N van |
-| `--epsilon-start` | 0.5 | Epsilon bat dau |
-| `--epsilon-end` | 0.01 | Epsilon ket thuc |
 | `--model-path` | `models/rl_agent.pth` | Duong dan luu model |
 | `--resume` | (off) | Tiep tuc tu checkpoint cuoi |
+| `--mount-drive` | (off) | Mount Google Drive, save model/logs vao Drive (khong mat khi session het) |
 
 ### E. Download ket qua
 
@@ -133,6 +139,7 @@ Sau khi train xong, file duoc luu trong:
 - `/content/models/checkpoint.json` — metadata (episodes_done, win_counts)
 - `/content/logs/replays.jsonl` — lich su van dau
 
+Neu dung `--mount-drive`, file duoc dong bo vao **MyDrive/gomoku/** (khong mat khi session het).
 Download `rl_agent.pth` ve may, dat vao `models/` trong project local.
 
 ### F. So sanh tren may local
@@ -147,3 +154,4 @@ python src/scripts/compare.py --matches 20 --rl-model models/rl_agent.pth --dept
 - **Resume:** Upload `models/` (3 files: `.pth`, `_buffer.npz`, `checkpoint.json`) vao session moi, dung `--resume`.
 - **Luu output:** Neu session sap reset, download checkpoint truoc khi ngat runtime.
 - **Disk:** Session storage tam thoi, nen download model sau khi train.
+- **Mount Drive:** Neu dung `--mount-drive`, khong can upload lai file moi session — model da co san trong Drive, resume tu dong.

@@ -98,8 +98,8 @@ def main() -> None:
         help="Opponent agent type (rl=fast policy net, alphazero=MCTS)",
     )
     parser.add_argument("--rl-model", type=str, default=None, help="RL model checkpoint path")
-    parser.add_argument("--mcts-sims", type=int, default=200, help="MCTS simulations for AlphaZero")
-    parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration coefficient")
+    parser.add_argument("--mcts-sims", type=int, default=80, help="MCTS simulations for AlphaZero")
+    parser.add_argument("--c-puct", type=float, default=1.4, help="PUCT exploration coefficient")
     parser.add_argument("--num-res-blocks", type=int, default=5, help="ResNet residual blocks")
     parser.add_argument("--channels", type=int, default=64, help="ResNet channel width")
     parser.add_argument("--log-replay", action="store_true", help="Log game replays to JSONL")

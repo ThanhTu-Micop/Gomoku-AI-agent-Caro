@@ -233,8 +233,8 @@ class AlphaZeroAgent(Agent):
         lr: float = 1e-3,
         lr_decay_steps: int = 2_000,
         lr_decay_gamma: float = 0.5,
-        num_simulations: int = 200,
-        c_puct: float = 1.5,
+        num_simulations: int = 80,
+        c_puct: float = 1.4,
         num_res_blocks: int = 5,
         channels: int = 64,
     ) -> None:
@@ -281,6 +281,17 @@ class AlphaZeroAgent(Agent):
                 move_idx = int(np.random.choice(len(pi), p=pi))
 
         best_move = (move_idx // BOARD_SIZE, move_idx % BOARD_SIZE)
+
+        # Safety net: if we have an immediate winning move, force it
+        our_critical = find_critical_threats(grid, player)
+        if our_critical:
+            if best_move not in our_critical:
+                return our_critical[0]
+
+        our_open_fours = find_open_fours(grid, player)
+        if our_open_fours:
+            if best_move not in our_open_fours:
+                return our_open_fours[0]
 
         # Safety net: if opponent has immediate winning threat and MCTS missed it, force block
         opponent = O if player == X else X

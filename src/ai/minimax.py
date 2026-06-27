@@ -69,7 +69,7 @@ class MinimaxAgent(Agent):
                 if current_best_move:
                     best_move_overall = current_best_move
                 
-                if max_eval >= 500000:
+                if max_eval >= 300000:
                     break
                     
             except TimeoutError:

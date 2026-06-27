@@ -14,19 +14,19 @@ from src.game.constants import BOARD_SIZE, EMPTY, X, O
 #   Single Stone                10
 SCORES = {
     'FIVE': 100_000,
-    'DOUBLE_OPEN_FOUR': 50_000,
-    'FOUR_OPEN': 10_000,
-    'FOUR_BLOCKED': 2_000,
+    'DOUBLE_OPEN_FOUR': 90_000,
+    'FOUR_OPEN': 80_000,
+    'FOUR_BLOCKED': 50_000,
     'OPEN_THREE_PLUS_FOUR': 8_000,
     'DOUBLE_OPEN_THREE': 5_000,
     'THREE_OPEN': 1_000,
     'THREE_BLOCKED': 300,
     'TWO_OPEN': 100,
     'TWO_BLOCKED': 10,
-    'FORK_BONUS': 200_000,
+    'FORK_BONUS': 20_000,
     'EDGE_PENALTY': -200,
     'HIDDEN_CONNECTION': 200,
-    'SHAPE_SPLIT_FOUR_BONUS': 15_000,
+    'SHAPE_SPLIT_FOUR_BONUS': 20_000,
     'CENTER_BONUS': 5.0,
     'CENTER_RING_BONUS': 2.0,
 }
@@ -122,8 +122,8 @@ def _evaluate_line(s: str) -> tuple[float, int, int, int]:
         score += SCORES['FOUR_BLOCKED']
         num_fours += 1
 
-    # Shape trap: split four (XX_XX) is MORE dangerous
-    if '11011' in s:
+    # Shape trap: split fours (XX_XX / X_XXX / XXX_X) are MORE dangerous
+    if '11011' in s or '10111' in s or '11101' in s:
         score += SCORES['SHAPE_SPLIT_FOUR_BONUS']
 
     # Open three

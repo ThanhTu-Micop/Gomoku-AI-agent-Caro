@@ -50,7 +50,7 @@ class MCTS:
         network: torch.nn.Module,
         device: str = "cpu",
         num_simulations: int = 200,
-        c_puct: float = 1.5,
+        c_puct: float = 1.4,
     ) -> None:
         self.network = network
         self.device = device

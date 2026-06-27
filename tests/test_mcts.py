@@ -25,7 +25,7 @@ class UniformNet(nn.Module):
 
 
 def test_mcts_returns_valid_pi_and_masks_occupied() -> None:
-    mcts = MCTS(network=CenterBiasedNet(), num_simulations=50, c_puct=1.5)
+    mcts = MCTS(network=CenterBiasedNet(), num_simulations=50, c_puct=1.4)
     grid = np.full((BOARD_SIZE, BOARD_SIZE), EMPTY, dtype=int)
 
     pi = mcts.search(grid, X, temperature=1.0)
@@ -42,7 +42,7 @@ def test_mcts_returns_valid_pi_and_masks_occupied() -> None:
 
 
 def test_mcts_finds_immediate_winning_move() -> None:
-    mcts = MCTS(network=UniformNet(), num_simulations=80, c_puct=1.5)
+    mcts = MCTS(network=UniformNet(), num_simulations=80, c_puct=1.4)
     grid = np.full((BOARD_SIZE, BOARD_SIZE), EMPTY, dtype=int)
 
     grid[0, 0] = X

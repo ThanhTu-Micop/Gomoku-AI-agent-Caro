@@ -126,7 +126,7 @@ def find_open_fours(grid: np.ndarray, player: int) -> list[tuple[int, int]]:
                                         threats[pos] = max(threats.get(pos, 0), 9)
 
                         # P10: X_XXX_ (split four with gap)
-                        if window == "101110" or window == "011101":
+                        if window == "101110":
                             for k in range(win_len):
                                 if window[k] == "0":
                                     pos = (cells[i + k][1], cells[i + k][2])
@@ -894,6 +894,16 @@ def compute_threat_boosts(
         boosts[idx] = max(boosts[idx], 5.0)
 
     # Offensive: our own attacking moves
+    # Own open fours — almost guaranteed win
+    for move in find_open_fours(grid, player):
+        idx = move[0] * BOARD_SIZE + move[1]
+        boosts[idx] = max(boosts[idx], 9.0)
+
+    # Own closed fours — one move from winning
+    for move in find_closed_fours(grid, player):
+        idx = move[0] * BOARD_SIZE + move[1]
+        boosts[idx] = max(boosts[idx], 7.0)
+
     for move in find_fork_moves(grid, player):
         idx = move[0] * BOARD_SIZE + move[1]
         boosts[idx] = max(boosts[idx], 4.5)
