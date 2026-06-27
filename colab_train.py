@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 from collections import deque
 from dataclasses import dataclass, field
@@ -292,7 +293,7 @@ class MCTS:
         root = MCTSNode(player=player)
         self._evaluate_and_expand_batch([root], [root_state])
 
-        num_batches = max(1, self.num_simulations // batch_size)
+                num_batches = max(1, math.ceil(self.num_simulations / batch_size))
         
         with torch.inference_mode():
             for _ in range(num_batches):
@@ -516,7 +517,6 @@ class AlphaZeroAgent:
             loss.backward()
             self.optimizer.step()
             
-        self.scheduler.step()
         self.network.eval() # Return to eval mode for MCTS
         return float(loss.item())
 
@@ -792,6 +792,7 @@ def main() -> None:
             )
 
         if episode % args.save_every == 0:
+            agent.scheduler.step()
             agent.save(model_path)
             agent.save_buffer(buffer_path)
             with open(meta_path, "w") as f:

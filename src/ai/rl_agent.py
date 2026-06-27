@@ -184,6 +184,7 @@ class RLAgent(Agent):
         policy_targets = torch.tensor(policies, dtype=torch.float32).to(self.device)
         value_targets = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
 
+        self.network.train()
         policy_pred, value_pred = self.network(state_tensors)
 
         policy_loss = -torch.sum(
@@ -196,7 +197,6 @@ class RLAgent(Agent):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        self.scheduler.step()
         return {"total": loss.item(), "policy": policy_loss.item(), "value": value_loss.item()}
 
     def get_lr(self) -> float:
@@ -331,7 +331,6 @@ class AlphaZeroAgent(Agent):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        self.scheduler.step()
         self.network.eval()
         return {"total": loss.item(), "policy": policy_loss.item(), "value": value_loss.item()}
 

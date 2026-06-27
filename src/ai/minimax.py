@@ -99,6 +99,10 @@ class MinimaxAgent(Agent):
             if alpha >= beta:
                 return tt_entry['score']
 
+        # Store original bounds for correct TT flag determination
+        orig_alpha = alpha
+        orig_beta = beta
+
         game_over, winner = self._check_game_over(grid, last_move)
         if game_over:
             if winner == ai_player:
@@ -126,7 +130,6 @@ class MinimaxAgent(Agent):
         best_move = None
         if maximizing:
             max_eval = -float("inf")
-            orig_alpha = alpha
             for move in moves:
                 r, c = move
                 old_val = grid[r, c]
@@ -145,11 +148,10 @@ class MinimaxAgent(Agent):
                 if beta <= alpha:
                     break
             
-            self._store_tt(self.current_hash, max_eval, depth, orig_alpha, beta, best_move)
+            self._store_tt(self.current_hash, max_eval, depth, orig_alpha, orig_beta, best_move)
             return max_eval
         else:
             min_eval = float("inf")
-            orig_beta = beta
             for move in moves:
                 r, c = move
                 old_val = grid[r, c]
@@ -168,13 +170,13 @@ class MinimaxAgent(Agent):
                 if beta <= alpha:
                     break
             
-            self._store_tt(self.current_hash, min_eval, depth, alpha, orig_beta, best_move)
+            self._store_tt(self.current_hash, min_eval, depth, orig_alpha, orig_beta, best_move)
             return min_eval
 
-    def _store_tt(self, h, score, depth, alpha, beta, move):
-        if score <= alpha:
+    def _store_tt(self, h, score, depth, orig_alpha, orig_beta, move):
+        if score <= orig_alpha:
             flag = 'UPPERBOUND'
-        elif score >= beta:
+        elif score >= orig_beta:
             flag = 'LOWERBOUND'
         else:
             flag = 'EXACT'

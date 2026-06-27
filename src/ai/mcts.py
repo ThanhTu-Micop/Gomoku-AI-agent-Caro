@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 import numpy as np
 import torch
 
 from src.game.constants import BOARD_SIZE, EMPTY, O, X
 from src.game.rules import is_draw, is_win
-from src.ai.threats import compute_threat_boosts
 
 
 def _other_player(player: int) -> int:
@@ -68,7 +68,7 @@ class MCTS:
         root = MCTSNode(player=player)
         self._evaluate_and_expand_batch([root], [root_state])
 
-        num_batches = max(1, self.num_simulations // batch_size)
+        num_batches = max(1, math.ceil(self.num_simulations / batch_size))
         
         with torch.inference_mode():
             for _ in range(num_batches):
@@ -149,15 +149,6 @@ class MCTS:
                         masked_policy = valid_mask / valid_mask.sum()
                     else:
                         masked_policy /= total
-
-                    # === Unified threat boost ===
-                    boosts = compute_threat_boosts(state, node.player)
-                    masked_policy *= boosts
-
-                    # Renormalize after boost
-                    total_boosted = float(masked_policy.sum())
-                    if total_boosted > 0:
-                        masked_policy /= total_boosted
 
                     node.is_expanded = True
                     for move_idx in np.where(valid_mask > 0)[0]:

@@ -258,6 +258,7 @@ def main() -> None:
             )
 
         if episode % args.save_every == 0:
+            agent.scheduler.step()
             agent.save(args.model_path)
             agent.save_buffer(buffer_path)
             with open(meta_path, "w") as f:
